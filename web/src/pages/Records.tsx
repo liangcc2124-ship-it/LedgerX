@@ -1,0 +1,2 @@
+import type { Snapshot } from '../types'; import { Icon } from '../icons'; import { RecordTable } from './Overview';
+export function Records({state,onAdd,onDelete}:{state:Snapshot;onAdd:()=>void;onDelete:(id:string)=>void}){return <div className="page"><div className="page-title"><div><h1>全部记录</h1><p>每一笔都能追溯，也都允许你体面地撤回。</p></div><button className="button primary" onClick={onAdd}><Icon name="plus"/>新增记录</button></div><section className="panel records-panel full"><RecordTable state={state} onDelete={id=>confirm('确定删除这条记录？')&&onDelete(id)}/></section></div>}

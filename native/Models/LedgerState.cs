@@ -9,4 +9,5 @@ public sealed class LedgerState
     public bool HideAllAmounts { get; set; }
     public string ThemeName { get; set; } = "暖铜";
     public string? CustomThemePath { get; set; }
+    public string? CustomThemeCss { get; set; }
 }

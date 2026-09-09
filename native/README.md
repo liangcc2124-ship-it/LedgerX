@@ -1,16 +1,18 @@
-# LedgerX Native
+# LedgerX Desktop Host
 
-LedgerX 的 Windows 原生版本，基于 WPF 与 .NET 10，不包含 Electron、Chromium 或 WebView。
+LedgerX 使用 WPF 提供 Windows 窗口、生命周期、文件选择和本地存储，完整可见界面由 React + TypeScript 运行在系统 WebView2 中。它不是 Electron：不会随应用再打包一整套 Chromium。
 
 ## 本地开发
 
-```powershell
+先构建 Web 界面，再构建原生宿主：
+
+~~~powershell
+cd ..\web
+npm install
+npm run build
+cd ..\native
 dotnet build LedgerX.Native.csproj
 dotnet run --project LedgerX.Native.csproj
-```
+~~~
 
-正式数据默认保存在 `%LocalAppData%\LedgerX\ledger.json`。皮肤支持内置主题与安全 CSS 变量导入。
-
-## 皮肤变量
-
-可导入 `:root` 中的 `--lx-background`、`--lx-surface`、`--lx-sidebar`、`--lx-primary`、`--lx-primary-hover`、`--lx-text`、`--lx-muted`、`--lx-border`、`--lx-income`、`--lx-cost`、`--lx-warning`、`--lx-selected`、`--lx-card-radius` 与 `--lx-font-family`。其他 CSS 内容不会执行。
+正式数据默认保存在 %LocalAppData%\LedgerX\ledger.json。自定义皮肤只接受 --lx-* CSS 变量，并拒绝远程资源和可执行表达式。

@@ -1,0 +1,22 @@
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Sidebar } from './components/Sidebar'; import { RecordModal } from './components/RecordModal'; import { MetricModal } from './components/MetricModal'; import { ThemeModal } from './components/ThemeModal'; import { Icon } from './icons'; import { invoke } from './bridge';
+import type { Metric, Page, RecordDraft, Snapshot } from './types'; import { Overview } from './pages/Overview'; import { Metrics } from './pages/Metrics'; import { Records } from './pages/Records'; import { Analysis } from './pages/Analysis'; import { Data } from './pages/Data';
+
+const themeVars:Record<string,Record<string,string>>={
+ '暖铜':{'--lx-background':'#F7F6F3','--lx-sidebar':'#F1F0ED','--lx-surface':'#FFFDFC','--lx-primary':'#9A6A3A','--lx-primary-hover':'#7D542D','--lx-text':'#1D1D1F','--lx-muted':'#76736F','--lx-border':'#DEDBD5','--lx-selected':'#EDE5DA'},
+ '石墨':{'--lx-background':'#F5F5F4','--lx-sidebar':'#ECECEA','--lx-surface':'#FFFFFF','--lx-primary':'#444443','--lx-primary-hover':'#242424','--lx-text':'#181818','--lx-muted':'#737373','--lx-border':'#DADAD7','--lx-selected':'#DFDFDC'},
+ '深海蓝':{'--lx-background':'#F3F5F7','--lx-sidebar':'#E9EDF1','--lx-surface':'#FCFDFE','--lx-primary':'#294A68','--lx-primary-hover':'#19364F','--lx-text':'#18232D','--lx-muted':'#687681','--lx-border':'#D4DBE1','--lx-selected':'#DCE5EC'}
+};
+function applyTheme(state:Snapshot){const vars=themeVars[state.themeName]||themeVars['暖铜'];Object.entries(vars).forEach(([k,v])=>document.documentElement.style.setProperty(k,v));let style=document.getElementById('custom-theme');if(!style){style=document.createElement('style');style.id='custom-theme';document.head.append(style)}style.textContent=state.customThemeCss||''}
+
+export default function App(){
+ const [state,setState]=useState<Snapshot|null>(null),[page,setPage]=useState<Page>('overview'),[recordOpen,setRecordOpen]=useState(false),[preset,setPreset]=useState<Metric|null>(null),[metricOpen,setMetricOpen]=useState(false),[themeOpen,setThemeOpen]=useState(false),[error,setError]=useState('');
+ const command=useCallback(async(c:string,p:unknown={})=>{try{const next=await invoke<Snapshot>(c,p);setState(next);applyTheme(next)}catch(e){setError(e instanceof Error?e.message:'操作失败');throw e}},[]);
+ useEffect(()=>{command('getState')},[command]);
+ const title=useMemo(()=>({overview:'财务总览',metrics:'指标中心',records:'全部记录',analysis:'财务分析',data:'数据管理'})[page],[page]);
+ if(!state)return <div className="loading"><span></span><b>LedgerX 正在整理数字</b></div>;
+ const openRecord=(m?:Metric|null)=>{setPreset(m||null);setRecordOpen(true)};
+ return <div className="app-shell"><Sidebar page={page} onNavigate={setPage} onTheme={()=>setThemeOpen(true)}/><main><div className="mobile-bar"><div className="brand-mini"><img src="./ledgerx-icon.png"/>LedgerX</div><select aria-label="页面" value={page} onChange={e=>setPage(e.target.value as Page)}><option value="overview">财务总览</option><option value="metrics">指标中心</option><option value="records">全部记录</option><option value="analysis">财务分析</option><option value="data">数据管理</option></select></div><div className="top-actions"><span>{title}</span><button className="privacy-button" onClick={()=>command('toggleAllPrivacy')}><Icon name={state.hideAllAmounts?'eyeOff':'eye'} size={18}/>{state.hideAllAmounts?'显示金额':'隐藏金额'}</button></div>
+ {page==='overview'&&<Overview state={state} onAdd={()=>openRecord()} onRecord={openRecord} onPrivacy={id=>command('toggleMetricPrivacy',{id})} onNavigate={()=>setPage('records')}/>} {page==='metrics'&&<Metrics state={state} onAdd={()=>setMetricOpen(true)} onToggle={(id,enabled)=>command('setMetricEnabled',{id,enabled})} onDelete={id=>command('deleteCustomMetric',{id})}/>} {page==='records'&&<Records state={state} onAdd={()=>openRecord()} onDelete={id=>command('deleteRecord',{id})}/>} {page==='analysis'&&<Analysis state={state}/>} {page==='data'&&<Data state={state} onCommand={command}/>} </main>
+ {recordOpen&&<RecordModal metrics={state.metrics} preset={preset} onClose={()=>setRecordOpen(false)} onSave={(d:RecordDraft)=>command('addRecord',d)}/>} {metricOpen&&<MetricModal onClose={()=>setMetricOpen(false)} onSave={d=>command('addCustomMetric',d)}/>} {themeOpen&&<ThemeModal state={state} onClose={()=>setThemeOpen(false)} onCommand={command}/>} {error&&<div className="toast" onClick={()=>setError('')}>{error}</div>}</div>
+}

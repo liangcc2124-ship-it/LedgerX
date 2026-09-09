@@ -22,3 +22,10 @@ Thumbs.db
 desktop.ini
 .idea/
 .vscode/
+
+# WebView frontend
+web/node_modules/
+web/dist/
+web/test-results/
+web/playwright-report/
+*.tsbuildinfo

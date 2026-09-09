@@ -4,9 +4,11 @@
   <p>把财务指标放到桌面上。钱没有变多，但至少终于知道它去哪了。</p>
 </div>
 
-LedgerX 是一款面向个人使用的 Windows 原生财务管理软件。它不连接银行卡、不上传云端、不要求注册，也不会在你买完奶茶后弹出一句“请反思消费观”。你只需手动记账，它负责把记录变成现金、成本、资产、负债和资金链指标。
+当前版本：v2.0.0
 
-![LedgerX 指标中心](docs/design/ledgerx-custom-metrics-preview.png)
+LedgerX 是一款面向个人使用的 Windows 桌面财务管理软件。它不连接银行卡、不上传云端、不要求注册，也不会在你买完奶茶后弹出一句“请反思消费观”。你只需手动记账，它负责把记录变成现金、成本、资产、负债和资金链指标。
+
+![LedgerX v2.0 财务总览](docs/design/ledgerx-webview-v2.png)
 
 ## 为什么做它
 
@@ -25,10 +27,11 @@ LedgerX 是一款面向个人使用的 Windows 原生财务管理软件。它不
 
 ## 技术栈
 
-- C# / .NET 10
-- WPF（Windows 原生桌面 UI）
+- C# / .NET 10（账本、指标计算、本地文件与系统窗口）
+- WPF + Microsoft WebView2（轻量原生宿主）
+- React + TypeScript + Vite（完整可见界面）
 - 本地 JSON 持久化
-- 无 Electron、无 Chromium、无 WebView
+- 无 Electron、无云端、无账号系统
 
 ## 下载与运行
 
@@ -44,13 +47,17 @@ LedgerX 是一款面向个人使用的 Windows 原生财务管理软件。它不
 
 ## 从源码构建
 
-需要 Windows 10/11 与 .NET 10 SDK。
+需要 Windows 10/11、Node.js 20+ 与 .NET 10 SDK。系统需安装 Microsoft Edge WebView2 Runtime（Windows 11 默认已包含）。
 
-```powershell
+~~~powershell
+cd web
+npm install
+npm run build
+cd ..
 dotnet build native\LedgerX.Native.csproj
 dotnet run --project native\LedgerX.Native.csproj
 dotnet publish native\LedgerX.Native.csproj -c Release -o release-native
-```
+~~~
 
 发布结果位于 `release-native\LedgerX.exe`。
 
