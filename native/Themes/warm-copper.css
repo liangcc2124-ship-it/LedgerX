@@ -1,0 +1,16 @@
+:root {
+  --lx-background: #F7F6F3;
+  --lx-surface: #FFFDFC;
+  --lx-sidebar: #F1F0ED;
+  --lx-primary: #9A6A3A;
+  --lx-primary-hover: #7D542D;
+  --lx-text: #1D1D1F;
+  --lx-muted: #76736F;
+  --lx-border: #DEDBD5;
+  --lx-income: #A06F3D;
+  --lx-cost: #B84F45;
+  --lx-warning: #7C572E;
+  --lx-selected: #EDE5DA;
+  --lx-card-radius: 12px;
+  --lx-font-family: "Segoe UI Variable, Microsoft YaHei UI";
+}

@@ -1,0 +1,24 @@
+# Build outputs
+**/bin/
+**/obj/
+release-native/
+
+# Local .NET state
+.dotnet-home/
+.vs/
+*.user
+*.suo
+
+# Personal ledger data and backups
+ledger.json
+ledger.damaged-*.json
+LedgerX-backup-*.json
+qa-*/
+*-result.json
+
+# OS and editor noise
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/
+.vscode/
