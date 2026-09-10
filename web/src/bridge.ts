@@ -1,133 +1,99 @@
-import type { LedgerRecord, Metric, MetricDetail, RecordDraft, Snapshot, WarningRule } from './types';
+import type { CategoryDefinition, DepreciationMethodPayload, FinancialAccount, FormulaDefinition, FormulaToken, LedgerRecord, Metric, MetricDetail, MetricTemplate, RecordDraft, Snapshot, WarningRule } from './types';
 
 declare global { interface Window { chrome?: { webview?: { postMessage(message: unknown): void; addEventListener(type: 'message', listener: (event: MessageEvent) => void): void } } } }
 
-const builtIns: Metric[] = [
-  ['cash','现金储备','随时可用资金',false], ['netflow','净现金流','累计流入 − 流出',false],
-  ['assets','总资产','现金 + 固定资产',false], ['chain','资金链','当前可支撑月数',false],
-  ['fixedcost','固定成本','周期性、刚性成本',false], ['variablecost','可变成本','随使用变化的成本',false],
-  ['fixedassets','固定资产','耐用品账面价值',false], ['payables','应付账款','尚未支付的义务',false],
-  ['runway','Runway','按当前消耗可维持',false]
-].map(([id,name,subtitle,canRecord]) => ({ id, name, subtitle, canRecord, displayValue: '¥ 0.00', rawValue: 0, isCustom:false, isHidden:false, isEnabled:true, displayFormat:'Currency' } as Metric));
+/** Commands exposed by the v3 desktop host. Keep this list in sync with MainWindow's dispatcher. */
+export type BridgeCommand='getState'|'getDashboard'|'getMetricDetail'|'getReport'|'getSettings'|'getDiagnostics'|'previewWarningRule'|'saveWarningRule'|'toggleWarningRule'|'copyWarningRule'|'deleteWarningRule'|'updateWarningEvent'|'createProfile'|'switchProfile'|'archiveProfile'|'saveCategory'|'archiveCategories'|'mergeCategories'|'saveAccount'|'archiveAccounts'|'addRecord'|'updateRecord'|'deleteRecord'|'restoreRecord'|'purgeRecord'|'bulkDeleteRecords'|'bulkRestoreRecords'|'bulkPurgeRecords'|'bulkUpdateRecords'|'bulkUpdateIncomeSource'|'addMetricFromTemplate'|'saveMetricDefinition'|'saveFormula'|'archiveMetrics'|'deleteMetrics'|'previewDepreciation'|'disposeFixedAsset'|'saveDashboardLayout'|'resetDashboardLayout'|'toggleAllPrivacy'|'toggleMetricPrivacy'|'setMetricEnabled'|'addCustomMetric'|'deleteCustomMetric'|'setTheme'|'saveSettings'|'backup'|'restore'|'importTheme'|'exportTheme'|'openDataFolder'|'exportReportPdf'|'clearLedger'|'factoryReset'|'undoLastDanger'|'createEmptyAfterRecovery';
+type IdList={ids:string[]};
+export type BridgePayload<C extends BridgeCommand>=
+ C extends 'getDashboard'?{period?:import('./types').Period;start?:string;end?:string}:
+ C extends 'getMetricDetail'?{id:string;period?:import('./types').Period;start?:string;end?:string}:
+ C extends 'getReport'?{kind?:'day'|'week'|'month'|'year';anchor?:string}:
+ C extends 'addRecord'?RecordDraft:
+ C extends 'updateRecord'?RecordDraft&{id:string}:
+ C extends 'bulkDeleteRecords'|'bulkRestoreRecords'|'bulkPurgeRecords'|'archiveCategories'|'archiveAccounts'|'archiveMetrics'|'deleteMetrics'?IdList:
+ C extends 'bulkUpdateRecords'?IdList&{patch:{categoryId:string}}:
+ C extends 'deleteRecord'|'restoreRecord'|'purgeRecord'|'disposeFixedAsset'|'toggleMetricPrivacy'|'deleteCustomMetric'?{id:string}:
+ C extends 'setMetricEnabled'?{id:string;enabled:boolean}:
+ C extends 'createProfile'?{name:string}:
+ C extends 'switchProfile'|'archiveProfile'?{id:string}:
+ C extends 'saveCategory'?{id?:string;name:string;parentId?:string|null}:
+ C extends 'saveAccount'?{id?:string;name:string;kind:import('./types').AccountKind;openingBalance:number;openingDate?:string;includeInAvailableCash:boolean}:
+ C extends 'addMetricFromTemplate'?{templateId:string;name?:string}:
+ C extends 'saveMetricDefinition'|'addCustomMetric'?{name:string;subtitle:string;displayFormat:'Currency'|'Number'|'Percent';formulaId?:string}:
+ C extends 'saveFormula'?{id?:string;scope:import('./types').FormulaScope;tokens:FormulaToken[];resultType:import('./types').FormulaResultType}:
+ C extends 'previewDepreciation'?{cost:number;residualValue:number;usefulLifeMonths:number;depreciationMethod:import('./types').DepreciationMethodPayload}:
+ C extends 'saveDashboardLayout'?import('./types').DashboardLayout:
+ C extends 'setTheme'?{name:string;customThemeCss?:string}:
+ C extends 'saveSettings'?Partial<import('./types').LedgerSettings>:
+ Record<string,unknown>;
+export type BridgeResponse<C extends BridgeCommand>=C extends 'getState'|'getDashboard'?Snapshot:C extends 'getMetricDetail'?MetricDetail:C extends 'getReport'?import('./types').ReportData:C extends 'saveFormula'?{id:string}:C extends 'previewDepreciation'?{monthlyAmount:number;bookValue:number}:unknown;
 
-let mock: Snapshot = {
-  metrics: builtIns, records: [], deletedRecords: [], hideAllAmounts:false, themeName:'暖铜', dataFile:'浏览器演示模式（正式版保存至本机）',
-  analysis:{ empty:true, income:0, fixedCost:0, variableCost:0, dependency:0, fixedCostRatio:0, verdict:'还没有记录。先录入一笔收入或成本，分析会立即出现。' }, warningRules:[], warningEvents:[], settings:{notificationsEnabled:false,autoBackupEnabled:true,autoBackupIntervalDays:7,autoBackupRetentionCount:10,lastSettingsSection:'general',currencySymbol:'¥',safetyBufferTarget:3000}, recovery:{required:false,availableSnapshots:[]}, schemaVersion:2,recordCount:0,deletedRecordCount:0,customMetricCount:0,warningRuleCount:0
-};
-
+const token=(label:string,kind:FormulaToken['kind']='source'):FormulaToken=>({id:crypto.randomUUID(),kind,label,value:label});
+const toNativeDepreciation=(method:DepreciationMethodPayload)=>({StraightLine:'StraightLine',UnitsOfProduction:'UnitsOfProduction',DoubleDeclining:'DoubleDecliningBalance',SumOfYears:'SumOfYearsDigits',Custom:'CustomFormula'}[method] as import('./types').DepreciationMethod);
+const templates:MetricTemplate[]=[
+ {id:'available-cash',group:'现金与流动性',name:'可用现金',description:'所有启用现金类资金账户余额之和。',displayFormat:'Currency',periodBehavior:'PointInTime',defaultFormula:[token('可用资产账户余额')],acceptsDirectRecordAssignment:false},
+ {id:'net-cash-flow',group:'现金与流动性',name:'净现金流',description:'所选期间现金流入减现金流出。',displayFormat:'Currency',periodBehavior:'Period',defaultFormula:[token('现金流入'),token('−','operator'),token('现金流出')],acceptsDirectRecordAssignment:false},
+ {id:'fixed-cost',group:'收支与成本',name:'已确认固定成本',description:'按服务期间确认的固定成本。',displayFormat:'Currency',periodBehavior:'Period',defaultFormula:[token('已确认固定成本')],acceptsDirectRecordAssignment:true},
+ {id:'total-cost',group:'收支与成本',name:'总成本',description:'固定成本、可变成本及折旧/摊销之和。',displayFormat:'Currency',periodBehavior:'Period',defaultFormula:[token('已确认固定成本'),token('+','operator'),token('已确认可变成本'),token('+','operator'),token('折旧/摊销')],acceptsDirectRecordAssignment:false},
+ {id:'asset-value',group:'资产负债',name:'固定资产净值',description:'固定资产原值减累计折旧和减值。',displayFormat:'Currency',periodBehavior:'PointInTime',defaultFormula:[token('固定资产原值'),token('−','operator'),token('累计折旧')],acceptsDirectRecordAssignment:false},
+ {id:'subscription-cost',group:'订阅与摊销',name:'本期订阅成本',description:'所选期间内已确认的订阅服务成本。',displayFormat:'Currency',periodBehavior:'Period',defaultFormula:[token('订阅已确认成本')],acceptsDirectRecordAssignment:true},
+ {id:'runway',group:'风险与效率',name:'Runway',description:'可用现金可覆盖的最近月均消耗月数。',displayFormat:'Number',periodBehavior:'Rolling',defaultFormula:[token('可用现金'),token('÷','operator'),token('最近 N 月 Burn Rate')],acceptsDirectRecordAssignment:false}
+];
+const categories:CategoryDefinition[]=[
+ ['income','收入',null],['rent','房租','居住'],['utilities','水电燃气','居住'],['dining','餐饮','日常生活'],['transport','交通','日常生活'],['health','医疗健康','日常生活'],['software','软件订阅','周期服务'],['media','影音会员','周期服务'],['insurance','保险','周期服务'],['computer','电脑及电子设备','固定资产'],['furniture','家具及家电','固定资产'],['vehicle','车辆','固定资产'],['mileage','里程','非资金数据']
+].map(([id,name,parentId],sortOrder)=>({id:String(id),name:String(name),parentId:parentId||null,isSystem:true,sortOrder,applicableRecordTypes:[]}));
+const accounts:FinancialAccount[]=[{id:'cash-reserve',name:'现金储备',kind:'Cash',balanceSide:'Asset',openingDate:'2026-01-01',openingBalance:0,includeInAvailableCash:true,displayBalance:'¥ 0.00'}];
+const builtIns:Metric[]=[['cash','可用现金','资金账户的可用余额'],['netflow','净现金流','现金流入 − 现金流出'],['assets','总资产','可用现金 + 资产净值'],['fixedcost','固定成本','按服务期确认'],['variablecost','可变成本','随使用变化'],['fixedassets','固定资产','耐用品账面价值'],['payables','应付账款','尚未支付的义务'],['runway','Runway','按当前消耗可维持']].map(([id,name,subtitle])=>({id,name,subtitle,canRecord:false,isCustom:false,isHidden:false,isEnabled:true,displayFormat:'Currency' as const,displayValue:'¥ 0.00',rawValue:0}));
+let mock:Snapshot={metrics:builtIns,records:[],deletedRecords:[],hideAllAmounts:false,themeName:'暖铜',dataFile:'浏览器演示模式（正式版保存至本机）',analysis:{empty:true,income:0,fixedCost:0,variableCost:0,dependency:0,fixedCostRatio:0,verdict:'还没有记录。先录入一笔收入或成本，分析会立即出现。'},warningRules:[],warningEvents:[],settings:{notificationsEnabled:false,autoBackupEnabled:true,autoBackupIntervalDays:7,autoBackupRetentionCount:10,lastSettingsSection:'general',currencySymbol:'¥',safetyBufferTarget:3000},recovery:{required:false,availableSnapshots:[]},schemaVersion:3,backupFormatVersion:2,appVersion:'3.0.0',recordCount:0,deletedRecordCount:0,customMetricCount:0,warningRuleCount:0,profiles:[{id:'default',name:'默认空间'}],activeProfileId:'default',categories:structuredClone(categories),financialAccounts:structuredClone(accounts),metricTemplates:structuredClone(templates),formulas:[],fixedAssets:[],dashboardLayout:{breakpoint:'desktop',version:1,items:[]}};
+const profileState=new Map<string,Snapshot>();
 const labels:Record<string,string>={Income:'现金流入',FixedCost:'固定成本',VariableCost:'可变成本',FixedAssetPurchase:'固定资产购置',PayableCreated:'新增应付账款',PayablePayment:'支付应付账款',CustomIncrease:'指标增加',CustomDecrease:'指标减少'};
-const positiveTypes = new Set(['Income','CustomIncrease']);
+const positiveTypes=new Set(['Income','CustomIncrease']);
+const currency=(value:number)=>'¥ '+new Intl.NumberFormat('zh-CN',{minimumFractionDigits:2,maximumFractionDigits:2}).format(value);
+function amountText(amount:number,type:string,hidden:boolean){if(hidden)return '••••••';return `${positiveTypes.has(type)?'+':'−'} ${currency(amount)}`}
+function sum(type:string){return mock.records.filter(r=>r.type===type).reduce((total,r)=>total+r.amount,0)}
+function values(){const income=sum('Income'),fixed=sum('FixedCost'),variable=sum('VariableCost'),purchases=sum('FixedAssetPurchase'),payments=sum('PayablePayment'),created=sum('PayableCreated');const cash=income-fixed-variable-purchases-payments;const months=Math.max(1,new Set(mock.records.map(r=>r.date.slice(0,7))).size);const burn=(fixed+variable+payments)/months;return {cash,netflow:income-fixed-variable-purchases-payments,assets:cash+purchases,fixedcost:fixed,variablecost:variable,fixedassets:purchases,payables:Math.max(0,created-payments),runway:burn?Math.max(0,cash)/burn:999}}
+function calculate(){const value=values();mock.metrics=mock.metrics.map(metric=>{const raw=metric.isCustom?mock.records.filter(record=>(record.metricTargetIds||[record.customMetricId]).includes(metric.id)).reduce((total,record)=>total+(record.type==='CustomDecrease'?-record.amount:record.amount),0):value[metric.id as keyof typeof value]??0;const display=mock.hideAllAmounts||metric.isHidden?'••••••':metric.id==='runway'?(raw===999?'暂无消耗':`${raw.toFixed(1)} 个月`):metric.displayFormat==='Percent'?`${raw.toFixed(2)}%`:metric.displayFormat==='Number'?raw.toFixed(2):currency(raw);return {...metric,rawValue:raw,displayValue:display}});mock.records=mock.records.map(record=>({...record,displayAmount:amountText(record.amount,record.type,mock.hideAllAmounts)}));mock.recordCount=mock.records.length;mock.deletedRecordCount=mock.deletedRecords.length;mock.customMetricCount=mock.metrics.filter(metric=>metric.isCustom).length;mock.warningRuleCount=mock.warningRules.length;const total=value.fixedcost+value.variablecost;mock.analysis={empty:!mock.records.length,income:value.cash+value.fixedcost+value.variablecost+value.fixedassets, fixedCost:value.fixedcost,variableCost:value.variablecost,dependency:null,fixedCostRatio:total?value.fixedcost/total*100:0,verdict:mock.records.length?'记录将由本机引擎按结算和服务期间计算。':'还没有记录。先录入一笔收入或成本，分析会立即出现。'};return structuredClone(mock)}
+function detail(metricId:string):MetricDetail{const snapshot=calculate(),metric=snapshot.metrics.find(item=>item.id===metricId)||snapshot.metrics[0];return {metric,periodLabel:snapshot.periodLabel||'全部记录',value:metric.rawValue??null,definition:metric.subtitle,formula:snapshot.formulas?.find(formula=>formula.id===metric.formulaId)?.tokens?.map(item=>item.label).join(' ')||'由本机指标引擎计算',dataStatus:snapshot.records.length?'ready':'empty',trend:snapshot.records.slice(0,14).map(record=>({label:record.date.slice(5),value:positiveTypes.has(record.type)?record.amount:-record.amount})),contributions:snapshot.records.filter(record=>metric.isCustom?(record.metricTargetIds||[]).includes(metric.id):true).map(record=>({recordId:record.id,date:record.date,label:`${record.typeLabel} · ${record.category||'未分类'}`,amount:positiveTypes.has(record.type)?record.amount:-record.amount,displayAmount:record.displayAmount,direction:positiveTypes.has(record.type)?'positive':'negative',explanation:'该记录参与当前指标的计算。'}))}}
+function report(kind:string){const snapshot=calculate(),value=values();return {kind,periodLabel:{day:'日报 · 今日',week:'周报 · 本周',month:'月报 · 本月',year:'年报 · 本年'}[kind]||'报告',generatedAt:new Date().toISOString(),unit:'人民币元',dataStatus:snapshot.records.length?'ready':'empty',metrics:{inflow:sum('Income'),outflow:sum('FixedCost')+sum('VariableCost'),netflow:value.netflow,cash:value.cash,fixedcost:value.fixedcost,variablecost:value.variablecost,payables:value.payables,assets:value.assets,runway:value.runway,dependency:null},metricStatus:{},comparison:{},series:[],costCategories:[],incomeSources:[],recordIds:snapshot.records.map(record=>record.id),summary:'报告由本机财务引擎生成。',upcomingPayables:0,openingCash:0,closingCash:value.cash}}
+function ensureLayout(){if(mock.dashboardLayout?.items.length)return;mock.dashboardLayout={breakpoint:'desktop',version:1,items:[...mock.metrics.filter(metric=>metric.isEnabled).map((metric,index)=>({widgetId:`metric:${metric.id}`,x:(index%4)*3,y:Math.floor(index/4)*2,w:3,h:2,minW:2,minH:2,maxW:6,maxH:4})),{widgetId:'cashflow',x:0,y:8,w:5,h:4,minW:3,minH:3,maxW:12,maxH:6},{widgetId:'records',x:5,y:8,w:7,h:4,minW:4,minH:3,maxW:12,maxH:6}]}}
+const pending=new Map<string,{resolve:(data:unknown)=>void;reject:(error:Error)=>void;timer:number}>();
+if(window.chrome?.webview)window.chrome.webview.addEventListener('message',event=>{const response=typeof event.data==='string'?JSON.parse(event.data):event.data;const waiter=pending.get(response.id);if(!waiter)return;window.clearTimeout(waiter.timer);pending.delete(response.id);if(response.ok)waiter.resolve(response.data);else {const reason=response.error?.message||response.error||response.code||'操作失败';waiter.reject(new Error(reason));}});
 
-function amountText(amount:number, type:string, hidden:boolean) {
-  if (hidden) return '••••••';
-  const sign = positiveTypes.has(type) ? '+ ' : '− ';
-  const prefix = type === 'CustomIncrease' || type === 'CustomDecrease' ? '' : '¥ ';
-  return sign + prefix + amount.toFixed(2);
+async function mockInvoke(command:string,payload:any):Promise<any>{
+ if(command==='getState'||command==='getDashboard'){mock.selectedPeriod=payload.period||mock.selectedPeriod||'all';mock.periodLabel={day:'今天',week:'本周',month:'本月',lastMonth:'上月',year:'本年',all:'全部记录',custom:'自定义'}[mock.selectedPeriod||'all'];ensureLayout();return calculate()}
+ if(command==='getMetricDetail')return detail(payload.id);if(command==='getReport')return report(payload.kind||'month');if(command==='getSettings')return calculate();if(command==='getDiagnostics')return {status:'正常',logEntries:[]};
+ if(command==='getCategories')return structuredClone(mock.categories||[]);if(command==='getAccounts')return structuredClone(mock.financialAccounts||[]);if(command==='getMetricTemplates')return structuredClone(mock.metricTemplates||templates);
+ if(command==='createProfile'){const id=`profile-${crypto.randomUUID()}`;profileState.set(mock.activeProfileId||'default',structuredClone(mock));mock.profiles=[...(mock.profiles||[]),{id,name:String(payload.name||'新用户空间')}];mock.activeProfileId=id;mock.records=[];mock.deletedRecords=[];mock.categories=structuredClone(categories);mock.financialAccounts=structuredClone(accounts);mock.metrics=structuredClone(builtIns);mock.dashboardLayout={breakpoint:'desktop',version:1,items:[]};return calculate()}
+ if(command==='switchProfile'){profileState.set(mock.activeProfileId||'default',structuredClone(mock));const next=profileState.get(payload.id);if(next){mock={...structuredClone(next),profiles:mock.profiles,activeProfileId:payload.id}}else mock.activeProfileId=payload.id;return calculate()}
+ if(command==='archiveProfile'){mock.profiles=(mock.profiles||[]).map(profile=>profile.id===payload.id?{...profile,isArchived:true}:profile);return calculate()}
+ if(command==='saveCategory'){const item:CategoryDefinition={id:payload.id||`category-${crypto.randomUUID()}`,name:String(payload.name).trim(),parentId:payload.parentId||null,isSystem:false,isArchived:false,sortOrder:(mock.categories||[]).length};mock.categories=payload.id?(mock.categories||[]).map(category=>category.id===payload.id?{...category,...item}:category):[...(mock.categories||[]),item];return calculate()}
+ if(command==='archiveCategories'){mock.categories=(mock.categories||[]).map(category=>payload.ids.includes(category.id)?{...category,isArchived:true}:category);return calculate()}
+ if(command==='mergeCategories'){mock.records=mock.records.map(record=>payload.ids.includes(record.categoryId)?{...record,categoryId:payload.targetId,category:(mock.categories||[]).find(category=>category.id===payload.targetId)?.name||record.category}:record);return calculate()}
+ if(command==='saveAccount'){const account:FinancialAccount={id:payload.id||`account-${crypto.randomUUID()}`,name:payload.name,kind:payload.kind||'Cash',balanceSide:['Credit','Loan','OtherLiability'].includes(payload.kind)?'Liability':'Asset',openingDate:payload.openingDate||new Date().toISOString().slice(0,10),openingBalance:Number(payload.openingBalance||0),includeInAvailableCash:!!payload.includeInAvailableCash};mock.financialAccounts=payload.id?(mock.financialAccounts||[]).map(item=>item.id===payload.id?account:item):[...(mock.financialAccounts||[]),account];return calculate()}
+ if(command==='archiveAccounts'){mock.financialAccounts=(mock.financialAccounts||[]).map(account=>payload.ids.includes(account.id)?{...account,isArchived:true}:account);return calculate()}
+ if(command==='addRecord'||command==='updateRecord'){const draft=payload as RecordDraft&{id?:string};const category=(mock.categories||[]).find(item=>item.id===draft.categoryId);const account=(mock.financialAccounts||[]).find(item=>item.id===draft.financialAccountId);const record:LedgerRecord={...draft,id:draft.id||crypto.randomUUID(),typeLabel:labels[draft.type]||draft.type,displayAmount:'',category:category?.name||draft.category,account:account?.name||draft.account,updatedAt:new Date().toISOString(),createdAt:draft.id?undefined:new Date().toISOString(),deletedAt:null};mock.records=draft.id?mock.records.map(item=>item.id===draft.id?{...item,...record}:item):[record,...mock.records];if(draft.fixedAsset){mock.fixedAssets=[...(mock.fixedAssets||[]),{...draft.fixedAsset,depreciationMethod:toNativeDepreciation(draft.fixedAsset.depreciationMethod),id:`asset-${crypto.randomUUID()}`}]}return calculate()}
+ if(command==='bulkDeleteRecords'||command==='deleteRecord'){const ids=payload.ids||[payload.id];const moving=mock.records.filter(record=>ids.includes(record.id));mock.records=mock.records.filter(record=>!ids.includes(record.id));mock.deletedRecords=[...moving.map(record=>({...record,deletedAt:new Date().toISOString()})),...mock.deletedRecords];return calculate()}
+ if(command==='bulkRestoreRecords'||command==='restoreRecord'){const ids=payload.ids||[payload.id];const restoring=mock.deletedRecords.filter(record=>ids.includes(record.id));mock.deletedRecords=mock.deletedRecords.filter(record=>!ids.includes(record.id));mock.records=[...restoring.map(record=>({...record,deletedAt:null})),...mock.records];return calculate()}
+ if(command==='bulkPurgeRecords'||command==='purgeRecord'){const ids=payload.ids||[payload.id];mock.deletedRecords=mock.deletedRecords.filter(record=>!ids.includes(record.id));return calculate()}
+ if(command==='bulkUpdateRecords'){mock.records=mock.records.map(record=>payload.ids.includes(record.id)?{...record,...payload.patch}:record);return calculate()}
+ if(command==='bulkUpdateIncomeSource'){mock.records=mock.records.map(record=>payload.ids.includes(record.id)?{...record,incomeSource:payload.incomeSource,isSelfGeneratedIncome:payload.isSelfGeneratedIncome}:record);return calculate()}
+ if(command==='addMetricFromTemplate'){const template=(mock.metricTemplates||templates).find(item=>item.id===payload.templateId);if(!template)throw new Error('未找到指标模板');const formula:FormulaDefinition={id:`formula-${crypto.randomUUID()}`,scope:'Metric',version:1,tokens:structuredClone(template.defaultFormula),resultType:template.displayFormat==='Currency'?'Money':template.displayFormat,isTemplate:false};mock.formulas=[...(mock.formulas||[]),formula];mock.metrics.push({id:`metric-${crypto.randomUUID()}`,name:payload.name||template.name,subtitle:template.description,displayFormat:template.displayFormat,isCustom:true,canRecord:template.acceptsDirectRecordAssignment,acceptsDirectRecordAssignment:template.acceptsDirectRecordAssignment,isEnabled:true,isHidden:false,displayValue:'¥ 0.00',rawValue:0,templateId:template.id,formulaId:formula.id});return calculate()}
+ if(command==='saveMetricDefinition'||command==='addCustomMetric'){const formulaId=payload.formulaId||null;mock.metrics.push({id:`metric-${crypto.randomUUID()}`,name:payload.name,subtitle:payload.subtitle||'自定义指标',displayFormat:payload.displayFormat||'Currency',isCustom:true,canRecord:true,acceptsDirectRecordAssignment:true,isEnabled:true,isHidden:false,displayValue:'¥ 0.00',rawValue:0,formulaId});return calculate()}
+ if(command==='validateFormula')return {valid:Array.isArray(payload.tokens)&&payload.tokens.length>0,errors:Array.isArray(payload.tokens)&&payload.tokens.length?[]:['请至少选择一个数据源']};
+ if(command==='previewFormula')return {value:0,status:'需要原生公式引擎试算',sources:[]};
+ if(command==='saveFormula'){const formula:FormulaDefinition={id:payload.id||`formula-${crypto.randomUUID()}`,scope:payload.scope||'Metric',version:payload.version||1,tokens:payload.tokens||[],resultType:payload.resultType||'Currency'};mock.formulas=[...(mock.formulas||[]).filter(item=>item.id!==formula.id),formula];return {id:formula.id}}
+ if(command==='archiveMetrics'||command==='deleteMetrics'||command==='deleteCustomMetric'){const ids=payload.ids||[payload.id];mock.metrics=mock.metrics.filter(metric=>!ids.includes(metric.id));return calculate()}
+ if(command==='setMetricEnabled'||command==='toggleMetricEnabled'){mock.metrics=mock.metrics.map(metric=>metric.id===payload.id?{...metric,isEnabled:payload.enabled}:metric);return calculate()}
+ if(command==='toggleAllPrivacy'){mock.hideAllAmounts=!mock.hideAllAmounts;return calculate()}if(command==='toggleMetricPrivacy'){mock.metrics=mock.metrics.map(metric=>metric.id===payload.id?{...metric,isHidden:!metric.isHidden}:metric);return calculate()}
+ if(command==='saveAllocationPlan')return calculate();if(command==='previewAllocation')return {total:payload.amount||0,periods:[{label:'服务期确认',amount:payload.amount||0}],method:payload.recognitionMethod||'ServicePeriodDaily'};
+ if(command==='saveFixedAsset') {mock.fixedAssets=[...(mock.fixedAssets||[]),{...payload,id:payload.id||`asset-${crypto.randomUUID()}`}];return calculate()}if(command==='previewDepreciation')return {method:payload.depreciationMethod||'StraightLine',monthlyAmount:Math.max(0,(Number(payload.cost||0)-Number(payload.residualValue||0))/Math.max(1,Number(payload.usefulLifeMonths||1))),bookValue:Number(payload.cost||0)};
+ if(command==='disposeFixedAsset'){mock.fixedAssets=(mock.fixedAssets||[]).filter(asset=>asset.id!==payload.id);return calculate()}
+ if(command==='saveDashboardLayout'){mock.dashboardLayout=payload;return calculate()}if(command==='resetDashboardLayout'){mock.dashboardLayout={breakpoint:'desktop',version:1,items:[]};ensureLayout();return calculate()}
+ if(command==='saveSettings'){mock.settings={...mock.settings,...payload};return calculate()}if(command==='setTheme'){mock.themeName=payload.name;mock.customThemeCss=payload.customThemeCss;return calculate()}if(command==='backup'||command==='restore'||command==='openDataFolder'||command==='undoLastDanger')return calculate();
+ if(command==='clearLedger'||command==='factoryReset'){mock.records=[];mock.deletedRecords=[];if(command==='factoryReset'){mock.categories=structuredClone(categories);mock.financialAccounts=structuredClone(accounts);mock.metrics=structuredClone(builtIns)}return calculate()}
+ if(command==='previewWarningRule')return {canEvaluate:true,triggered:false,value:0,explanation:'演示模式下没有触发预警。'};
+ if(command==='saveWarningRule'){const rule={...payload,id:payload.id||`rule-${crypto.randomUUID()}`};mock.warningRules=payload.id?mock.warningRules.map(item=>item.id===payload.id?rule:item):[...mock.warningRules,rule];return calculate()}if(command==='deleteWarningRule'){mock.warningRules=mock.warningRules.filter(rule=>rule.id!==payload.id);return calculate()}if(command==='toggleWarningRule'){mock.warningRules=mock.warningRules.map(rule=>rule.id===payload.id?{...rule,enabled:payload.enabled}:rule);return calculate()}if(command==='copyWarningRule')return calculate();if(command==='updateWarningEvent')return calculate();
+ throw new Error(`原生服务尚未提供命令：${command}`);
 }
-function format(metric:Metric, value:number|null) {
-  if (value === null) return '—';
-  if (mock.hideAllAmounts || metric.isHidden) return '••••••';
-  if (metric.id === 'chain') return value === 999 ? '暂无消耗' : value < 1 ? '偏紧' : value < 3 ? '需关注' : '稳健';
-  if (metric.id === 'runway') return value === 999 ? '暂无消耗' : value.toFixed(1) + ' 个月';
-  return metric.displayFormat === 'Percent' ? value.toFixed(2) + '%' : metric.displayFormat === 'Number' ? value.toFixed(2) : '¥ ' + value.toFixed(2);
-}
-function activeRecords() { return mock.records; }
-function sum(type:string) { return activeRecords().filter(r=>r.type===type).reduce((n,r)=>n+r.amount,0); }
-function values():Record<string,number> {
-  const income=sum('Income'), fixed=sum('FixedCost'), variable=sum('VariableCost'), purchases=sum('FixedAssetPurchase');
-  const payments=sum('PayablePayment'), created=sum('PayableCreated'), cash=income-fixed-variable-purchases-payments;
-  const months=Math.max(1,new Set(activeRecords().map(r=>r.date.slice(0,7))).size);
-  const burn=(fixed+variable+payments)/months, runway=burn>0?Math.max(0,cash)/burn:999;
-  return {cash,netflow:income-fixed-variable-purchases-payments,assets:cash+purchases,chain:runway,fixedcost:fixed,variablecost:variable,fixedassets:purchases,payables:Math.max(0,created-payments),runway};
-}
-function evaluateWarnings() {
- const rules=mock.warningRules||[]; const vals=values();
- mock.warningEvents=rules.filter(r=>r.enabled).map(r=>{const value=vals[r.metricId]??0; const triggered=r.operator==='>'?value>r.threshold:r.operator==='>='?value>=r.threshold:r.operator==='<'?value<r.threshold:value<=r.threshold; const now=new Date().toISOString(); return {id:'event-'+r.id,ruleId:r.id,status:triggered?'active':'resolved',measuredValue:value,threshold:r.threshold,periodStart:now.slice(0,10),periodEnd:now.slice(0,10),triggeredAt:now,lastEvaluatedAt:now,evidenceRecordIds:[],explanation:r.metricId+' '+r.operator+' '+r.threshold};});
-}function calculate() {
-  const vals=values();
-  mock.metrics=mock.metrics.map(m=>{
-    const value=m.isCustom?activeRecords().filter(r=>r.customMetricId===m.id).reduce((n,r)=>n+(r.type==='CustomDecrease'?-r.amount:r.amount),0):vals[m.id];
-    return {...m,rawValue:value,displayValue:format(m,value)};
-  });
-  mock.records=mock.records.map(r=>({...r,displayAmount:amountText(r.amount,r.type,mock.hideAllAmounts)}));
-  const income=sum('Income'), fixed=sum('FixedCost'), variable=sum('VariableCost');
-  const own=activeRecords().filter(r=>r.type==='Income' && r.category!=='父母支持').reduce((n,r)=>n+r.amount,0);
-  const total=fixed+variable;
-  const runway=vals.runway;
-  evaluateWarnings();
-  mock.analysis={empty:!activeRecords().length,income,fixedCost:fixed,variableCost:variable,dependency:income?(activeRecords().filter(r=>r.type==='Income'&&r.incomeSource==='父母支持').reduce((a,r)=>a+r.amount,0)/income*100):null,fixedCostRatio:total?(fixed/total*100):0,verdict:!activeRecords().length?'还没有记录。先录入一笔收入或成本，分析会立即出现。':runway<1?'资金链偏紧，建议先保留现金并检查可削减成本。':runway<3?'目前可维持时间有限，优先建立安全垫。':'资金链暂时稳健，可以继续观察成本结构。'};
-}
-function recordContribution(metric:Metric, r:LedgerRecord):MetricDetail['contributions'][number]|null {
-  const sign = positiveTypes.has(r.type) ? 'positive' : r.type === 'FixedAssetPurchase' && metric.id === 'assets' ? 'neutral' : 'negative';
-  const relevant = metric.isCustom ? r.customMetricId===metric.id : (
-    (metric.id==='cash' || metric.id==='netflow') && ['Income','FixedCost','VariableCost','FixedAssetPurchase','PayablePayment'].includes(r.type) ||
-    metric.id==='fixedcost' && r.type==='FixedCost' || metric.id==='variablecost' && r.type==='VariableCost' ||
-    metric.id==='fixedassets' && r.type==='FixedAssetPurchase' || metric.id==='payables' && ['PayableCreated','PayablePayment'].includes(r.type) ||
-    metric.id==='assets' && ['Income','FixedCost','VariableCost','PayablePayment','FixedAssetPurchase'].includes(r.type)
-  );
-  if (!relevant) return null;
-  const amount = metric.isCustom && r.type==='CustomDecrease' ? -r.amount : sign==='negative' ? -r.amount : r.amount;
-  const explanation = metric.id==='assets' && r.type==='FixedAssetPurchase' ? '现金减少、固定资产增加，总资产净影响为 0' : '该记录参与 ' + metric.name + ' 的计算';
-  return {recordId:r.id,date:r.date,label:r.typeLabel + (r.category ? ' · ' + r.category : ''),amount,displayAmount:amountText(Math.abs(amount),amount>=0?'Income':'FixedCost',mock.hideAllAmounts),direction:sign,explanation};
-}
-function detail(metricId:string):MetricDetail {
-  calculate();
-  const metric=mock.metrics.find(m=>m.id===metricId) || mock.metrics[0];
-  const vals=values(), value=metric.rawValue ?? null;
-  const contributions=activeRecords().map(r=>recordContribution(metric,r)).filter(Boolean) as MetricDetail['contributions'];
-  const days=[...new Set(activeRecords().map(r=>r.date))].sort().slice(-14);
-  const trend=(days.length?days:['—']).map(d=>({label:d.slice(5),value:days.length?activeRecords().filter(r=>r.date===d).reduce((n,r)=>n+(positiveTypes.has(r.type)?r.amount:-r.amount),0):0}));
-  const definitions:Record<string,string>={cash:'可立即使用的资金余额',netflow:'统计期间现金流入减去现金流出',assets:'现金与固定资产账面价值之和',fixedcost:'已发生的固定成本累计值',variablecost:'已发生的可变成本累计值',fixedassets:'固定资产购置金额累计值',payables:'新增应付账款减去已支付账款',chain:'现金储备按当前消耗可支撑的月数',runway:'现金储备除以平均月度消耗'};
-  const formulas:Record<string,string>={cash:'流入 − 固定成本 − 可变成本 − 固定资产购置 − 应付账款支付',netflow:'流入 − 流出',assets:'现金 + 固定资产',fixedcost:'Σ 固定成本',variablecost:'Σ 可变成本',fixedassets:'Σ 固定资产购置',payables:'Σ 新增应付账款 − Σ 支付应付账款',chain:'现金储备 ÷ Burn Rate',runway:'现金储备 ÷ Burn Rate'};
-  return {metric,periodLabel:'全部记录',value,comparisonValue:null,definition:definitions[metric.id] || '用户手动维护的累计指标',formula:formulas[metric.id] || 'Σ 增加 − Σ 减少',dataStatus:activeRecords().length?'ready':'empty',trend,components:metric.id==='runway'||metric.id==='chain'?[{label:'现金储备',value:vals.cash,sourceMetricId:'cash'},{label:'Burn Rate',value:(vals.fixedcost+vals.variablecost)/Math.max(1,new Set(activeRecords().map(r=>r.date.slice(0,7))).size),sourceMetricId:'runway'}]:undefined,contributions};
-}
-function report(kind:string) {
- calculate(); const v=values(), records=activeRecords(), outTypes=['FixedCost','VariableCost','FixedAssetPurchase','PayablePayment'];
- const grouped=Array.from(new Set(records.map(r=>r.date))).sort().slice(-31).map(date=>{const day=records.filter(r=>r.date===date),income=day.filter(r=>r.type==='Income').reduce((n,r)=>n+r.amount,0),outflow=day.filter(r=>outTypes.includes(r.type)).reduce((n,r)=>n+r.amount,0);return {label:date.slice(5),income,outflow,net:income-outflow,fixedCost:0,variableCost:0,assets:v.assets,payables:v.payables,recordIds:day.map(r=>r.id)}});
- const income=sum('Income'),outflow=sum('FixedCost')+sum('VariableCost')+sum('FixedAssetPurchase')+sum('PayablePayment');
- const top=(rows:LedgerRecord[],key:(r:LedgerRecord)=>string)=>{const groups=new Map<string,LedgerRecord[]>();for(const row of rows){const label=key(row);groups.set(label,[...(groups.get(label)||[]),row])}return Array.from(groups.entries()).map(([label,list])=>({label,value:list.reduce((n,r)=>n+r.amount,0),recordIds:list.map(r=>r.id)})).sort((a,b)=>b.value-a.value).slice(0,5)};
- const now=new Date().toISOString(); return {kind,periodLabel:kind==='day'?'日报 · 今日':kind==='week'?'周报 · 本周':kind==='month'?'月报 · 本月':'年报 · 本年',generatedAt:now.slice(0,16).replace('T',' '),unit:'人民币元',dataStatus:records.length?'ready':'empty',metrics:{inflow:income,outflow,netflow:income-outflow,cash:v.cash,fixedcost:v.fixedcost,variablecost:v.variablecost,payables:v.payables,assets:v.assets,runway:v.runway,dependency:mock.analysis.dependency},metricStatus:{cash:'ready',inflow:'ready',outflow:'ready',netflow:'ready',fixedcost:'ready',variablecost:'ready',payables:'ready',assets:'ready',runway:v.runway===999?'no-burn':'ready',dependency:income?'ready':'not-computable'},comparison:{inflow:0,outflow:0,netflow:0},series:grouped,costCategories:top(records.filter(r=>r.type==='FixedCost'||r.type==='VariableCost'),r=>r.category||'未分类'),incomeSources:top(records.filter(r=>r.type==='Income'),r=>r.incomeSource||'未知'),recordIds:records.map(r=>r.id),summary:records.length?(income-outflow>=0?'本周期净现金流为正。':'本周期净现金流为负。'):'本周期暂无记录。',upcomingPayables:0,openingCash:0,closingCash:v.cash,largestRecordId:null};
-}
-const pending = new Map<string, { resolve:(data:unknown)=>void; reject:(error:Error)=>void }>();
-if (window.chrome?.webview) window.chrome.webview.addEventListener('message', event => {
-  const response = typeof event.data === 'string' ? JSON.parse(event.data) : event.data;
-  const waiter=pending.get(response.id); if(!waiter)return; pending.delete(response.id);
-  response.ok ? waiter.resolve(response.data) : waiter.reject(new Error(response.error||'操作失败'));
-});
-
-async function mockInvoke(command:string,payload:any):Promise<any> {
-  if(command==='getState'||command==='getDashboard') { calculate(); mock.selectedPeriod=payload.period||mock.selectedPeriod||'all'; return structuredClone(mock); }
-  if(command==='getMetricDetail') return structuredClone(detail(payload.id));
-  if(command==='getReport') return structuredClone(report(payload.kind||'month'));
-  if(command==='getSettings') return {themeName:mock.themeName,customThemeCss:mock.customThemeCss||'',dataFile:mock.dataFile,notificationEnabled:false};
-  if(command==='getDiagnostics') return {status:'正常',logEntries:[]};
-  if(command==='previewWarningRule') { const rule=payload as WarningRule; const value=values()[rule.metricId]??0; const triggered=rule.operator==='<'?value<rule.threshold:rule.operator==='<='?value<=rule.threshold:rule.operator==='>'?value>rule.threshold:rule.operator==='>='?value>=rule.threshold:value===rule.threshold; return {canEvaluate:true,triggered,value,explanation:rule.metricId+' '+rule.operator+' '+rule.threshold}; }
-  if(command==='saveWarningRule') { const rule=payload as WarningRule; const saved={...rule,id:rule.id||'rule-'+crypto.randomUUID()}; mock.warningRules=rule.id?mock.warningRules.map(r=>r.id===rule.id?saved:r):[...mock.warningRules,saved]; evaluateWarnings(); return structuredClone(mock); }
-  if(command==='toggleWarningRule') mock.warningRules=mock.warningRules.map(r=>r.id===payload.id?{...r,enabled:payload.enabled}:r);
-  if(command==='copyWarningRule') { const r=mock.warningRules.find(x=>x.id===payload.id);if(r)mock.warningRules.push({...r,id:'rule-'+crypto.randomUUID(),name:r.name+'（副本）'}); }
-  if(command==='updateWarningEvent') mock.warningEvents=mock.warningEvents.map(e=>e.id===payload.id?{...e,status:payload.status}:e);
-  if(command==='deleteWarningRule') { mock.warningRules=(mock.warningRules||[]).filter(r=>r.id!==payload.id); mock.warningEvents=(mock.warningEvents||[]).filter(e=>e.ruleId!==payload.id); return structuredClone(mock); }
-  if(command==='clearLedger') { if(payload.confirmation!=='清空 LedgerX')throw new Error('确认文字不正确');mock.records=[];mock.deletedRecords=[];mock.metrics=mock.metrics.filter(m=>!m.isCustom);mock.warningRules=[];mock.warningEvents=[]; }
-  if(command==='factoryReset') { if(payload.confirmation!=='恢复出厂')throw new Error('确认文字不正确');mock.records=[];mock.deletedRecords=[];mock.warningRules=[];mock.warningEvents=[];mock.themeName='暖铜'; }
-  if(command==='saveSettings') mock.settings={...mock.settings,...payload};
-  if(command==='bulkUpdateIncomeSource') mock.records=mock.records.map(r=>payload.ids.includes(r.id)?{...r,incomeSource:payload.incomeSource,isSelfGeneratedIncome:payload.isSelfGeneratedIncome}:r);
-  if(command==='addRecord') { const d=payload as RecordDraft; const now=new Date().toISOString(); mock.records.unshift({...d,id:crypto.randomUUID(),typeLabel:labels[d.type],displayAmount:'',customMetricId:d.customMetricId,createdAt:now,updatedAt:now,deletedAt:null}); }
-  if(command==='updateRecord') { const d=payload as RecordDraft&{id:string}; mock.records=mock.records.map(r=>r.id===d.id?{...r,...d,typeLabel:labels[d.type],updatedAt:new Date().toISOString()}:r); }
-  if(command==='deleteRecord') { const record=mock.records.find(r=>r.id===payload.id); if(record){mock.records=mock.records.filter(r=>r.id!==payload.id);mock.deletedRecords.unshift({...record,deletedAt:new Date().toISOString()});} }
-  if(command==='restoreRecord') { const record=mock.deletedRecords.find(r=>r.id===payload.id); if(record){mock.deletedRecords=mock.deletedRecords.filter(r=>r.id!==payload.id);mock.records.unshift({...record,deletedAt:null,updatedAt:new Date().toISOString()});} }
-  if(command==='purgeRecord') mock.deletedRecords=mock.deletedRecords.filter(r=>r.id!==payload.id);
-  if(command==='toggleAllPrivacy') mock.hideAllAmounts=!mock.hideAllAmounts;
-  if(command==='toggleMetricPrivacy') mock.metrics=mock.metrics.map(m=>m.id===payload.id?{...m,isHidden:!m.isHidden}:m);
-  if(command==='toggleMetricEnabled') mock.metrics=mock.metrics.map(m=>m.id===payload.id?{...m,isEnabled:payload.enabled}:m);
-  if(command==='setMetricEnabled') mock.metrics=mock.metrics.map(m=>m.id===payload.id?{...m,isEnabled:payload.enabled}:m);
-  if(command==='addCustomMetric') mock.metrics.push({id:'custom-'+crypto.randomUUID(),name:payload.name,subtitle:payload.subtitle||'自定义指标',displayFormat:payload.displayFormat,isCustom:true,canRecord:true,isEnabled:true,isHidden:false,displayValue:'¥ 0.00',rawValue:0});
-  if(command==='deleteCustomMetric') { mock.metrics=mock.metrics.filter(m=>m.id!==payload.id); mock.records=mock.records.filter(r=>r.customMetricId!==payload.id); }
-  if(command==='setTheme') mock.themeName=payload.name;
-  calculate(); return structuredClone(mock);
-}
-
-export async function invoke<T=Snapshot>(command:string,payload:unknown={}):Promise<T> {
-  if(!window.chrome?.webview) return mockInvoke(command,payload) as Promise<T>;
-  const id=crypto.randomUUID();
-  return new Promise<T>((resolve,reject)=>{ pending.set(id,{resolve:resolve as (data:unknown)=>void,reject}); window.chrome!.webview!.postMessage({id,command,payload}); });
-}
+export async function invoke<C extends BridgeCommand>(command:C,payload:BridgePayload<C>={} as BridgePayload<C>):Promise<BridgeResponse<C>>{if(!window.chrome?.webview)return mockInvoke(command,payload) as Promise<BridgeResponse<C>>;const id=crypto.randomUUID();return new Promise<BridgeResponse<C>>((resolve,reject)=>{const timer=window.setTimeout(()=>{pending.delete(id);reject(new Error(`命令 ${command} 未在 15 秒内响应`))},15000);pending.set(id,{resolve:resolve as (data:unknown)=>void,reject,timer});window.chrome!.webview!.postMessage({id,command,payload});});}

@@ -2,8 +2,9 @@ namespace LedgerX.Models;
 
 public sealed class BackupEnvelope
 {
-    public int FormatVersion { get; set; } = 1;
-    public string AppVersion { get; set; } = "2.1.0";
+    public int FormatVersion { get; set; } = 2;
+    public string AppVersion { get; set; } = "3.0.0";
+    public Guid ProfileId { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.Now;
     public BackupSummary Summary { get; set; } = new();
     public string Checksum { get; set; } = string.Empty;

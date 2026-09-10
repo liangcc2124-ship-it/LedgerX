@@ -1,0 +1,8 @@
+import type { FormulaScope, FormulaToken } from '../types';
+import { Icon } from '../icons';
+const sources=['记录金额合计','现金流入','现金流出','已确认固定成本','已确认可变成本','资金账户余额','固定资产原值','累计折旧','资产净值','其他指标当前值'];
+const operators=['+','−','×','÷','(',')'];
+export function FormulaBuilder({scope,tokens,onChange,onPreview}:{scope:FormulaScope;tokens:FormulaToken[];onChange:(tokens:FormulaToken[])=>void;onPreview:()=>void}){
+ const add=(label:string,kind:FormulaToken['kind'])=>onChange([...tokens,{id:crypto.randomUUID(),label,kind,value:label}]);
+ return <section className="formula-builder" aria-label="结构化公式构建器"><div className="formula-builder-header"><div><b>结构化公式</b><p>只插入合法构件，括号和运算符无需手写。</p></div><button type="button" className="button small" onClick={onPreview}>试算</button></div><div className="formula-chips" aria-live="polite">{tokens.length?tokens.map((item,index)=><span className={'formula-chip '+item.kind} key={item.id}>{item.label}<button type="button" aria-label={'移除 '+item.label} onClick={()=>onChange(tokens.filter((_,position)=>position!==index))}><Icon name="close" size={13}/></button></span>):<span className="formula-placeholder">从下方选择数据源开始</span>}</div><div className="formula-palette"><div><small>数据源 · {scope==='Metric'?'指标':'当前记录/资产'}</small>{sources.map(source=><button type="button" key={source} onClick={()=>add(source,'source')}>{source}</button>)}</div><div><small>运算</small>{operators.map(operator=><button type="button" className="operator" key={operator} onClick={()=>add(operator,'operator')}>{operator}</button>)}{['SUM','AVG','ROUND','IF','ABS','CLAMP'].map(fn=><button type="button" className="operator" key={fn} onClick={()=>add(fn,'function')}>{fn}</button>)}</div></div></section>
+}

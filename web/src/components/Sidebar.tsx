@@ -1,11 +1,4 @@
-import type { Page } from '../types';
+import type { Page, Profile } from '../types';
 import { Icon } from '../icons';
-
-const items: {id:Page; label:string}[]=[{id:'overview',label:'财务总览'},{id:'metrics',label:'指标中心'},{id:'records',label:'全部记录'},{id:'analysis',label:'财务分析'},{id:'warnings',label:'预警中心'}];
-export function Sidebar({page,onNavigate}:{page:Page;onNavigate:(p:Page)=>void}){
- return <aside className="sidebar">
-  <div className="brand"><img src="./ledgerx-icon.png"/><span>LedgerX</span></div>
-  <nav>{items.map(i=><button key={i.id} className={page===i.id?'active':''} onClick={()=>onNavigate(i.id)}><Icon name={i.id}/><span>{i.label}</span></button>)}</nav>
-  <button className={'settings-entry '+(page==='settings'?'active':'')} onClick={()=>onNavigate('settings')}><Icon name="data"/><span>设置</span></button>
- </aside>
-}
+const items:{id:Page;label:string}[]=[{id:'overview',label:'财务总览'},{id:'metrics',label:'指标中心'},{id:'records',label:'全部记录'},{id:'analysis',label:'财务分析'},{id:'warnings',label:'预警中心'}];
+export function Sidebar({page,onNavigate,profiles=[],activeProfileId,onSwitchProfile,onManageProfiles}:{page:Page;onNavigate:(page:Page)=>void;profiles?:Profile[];activeProfileId?:string;onSwitchProfile:(id:string)=>void;onManageProfiles:()=>void}){const active=profiles.find(profile=>profile.id===activeProfileId);return <aside className="sidebar"><div className="brand"><img src="./ledgerx-icon.png" alt=""/><span>LedgerX</span></div><nav>{items.map(item=><button key={item.id} className={page===item.id?'active':''} onClick={()=>onNavigate(item.id)}><Icon name={item.id}/><span>{item.label}</span></button>)}</nav><div className="sidebar-bottom"><div className="profile-switcher"><label htmlFor="profile-switch">用户空间</label><select id="profile-switch" aria-label="用户空间" value={activeProfileId||''} onChange={event=>onSwitchProfile(event.target.value)}>{profiles.filter(profile=>!profile.isArchived).map(profile=><option key={profile.id} value={profile.id}>{profile.name}</option>)}</select><button type="button" className="text-button" onClick={onManageProfiles}>管理用户空间</button></div><button className={'settings-entry '+(page==='settings'?'active':'')} onClick={()=>onNavigate('settings')}><Icon name="data"/><span>设置</span></button></div></aside>}

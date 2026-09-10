@@ -14,6 +14,17 @@ public enum FinanceRecordType
     CustomDecrease
 }
 
+public enum SettlementMode
+{
+    PaidFromAccount,
+    IncludedInOpeningBalance,
+    Payable,
+    NonCash
+}
+
+public enum BillingCadence { None, Daily, Weekly, Monthly, Yearly, Custom }
+public enum RecognitionMethod { Immediate, StraightLineDaily, NaturalMonth, PreviousPeriod, CustomFormula }
+
 public sealed class FinanceRecord
 {
     public Guid Id { get; set; } = Guid.NewGuid();
@@ -22,6 +33,19 @@ public sealed class FinanceRecord
     public decimal Amount { get; set; }
     public string Category { get; set; } = string.Empty;
     public string Account { get; set; } = "现金储备";
+    public Guid? CategoryId { get; set; }
+    public List<string> MetricTargetIds { get; set; } = [];
+    public SettlementMode SettlementMode { get; set; } = SettlementMode.PaidFromAccount;
+    public DateTime? SettlementDate { get; set; }
+    public Guid? FinancialAccountId { get; set; }
+    public DateTime? ServiceStart { get; set; }
+    public DateTime? ServiceEndExclusive { get; set; }
+    public BillingCadence BillingCadence { get; set; }
+    public RecognitionMethod RecognitionMethod { get; set; } = RecognitionMethod.Immediate;
+    public Guid? AllocationFormulaId { get; set; }
+    public Guid? RecurringPlanId { get; set; }
+    public Guid? FixedAssetId { get; set; }
+    public Dictionary<string, decimal> FormulaParameterValues { get; set; } = [];
     public string Note { get; set; } = string.Empty;
     public string? CustomMetricId { get; set; }
     public string? IncomeSource { get; set; }

@@ -28,21 +28,28 @@ public sealed class MetricEngine
         return new(start, start.AddDays(6), $"{start:MM-dd} 至 {start.AddDays(6):MM-dd}", day >= start && day <= start.AddDays(6));
     }
 
-    public Dictionary<string, MetricValue> Calculate(IEnumerable<FinanceRecord> source, DateRange range, IEnumerable<CustomMetricDefinition>? customMetrics = null, int burnMonths = 3, decimal safetyTarget = 3000m)
+    public Dictionary<string, MetricValue> Calculate(IEnumerable<FinanceRecord> source, DateRange range, IEnumerable<CustomMetricDefinition>? customMetrics = null, int burnMonths = 3, decimal safetyTarget = 3000m, IEnumerable<MetricDefinition>? metricDefinitions = null, IEnumerable<FormulaDefinition>? formulaDefinitions = null)
     {
         var records = source.Where(x => x.DeletedAt is null).ToList();
         var effectiveEnd = range.End > DateTime.Today ? DateTime.Today : range.End;
         var period = records.Where(x => x.Date.Date >= range.Start && x.Date.Date <= effectiveEnd).ToList();
         var point = records.Where(x => x.Date.Date <= effectiveEnd).ToList();
+        var cashPeriod = records.Where(x => AccountEngine.AffectsCash(x) && AccountEngine.CashDate(x) >= range.Start && AccountEngine.CashDate(x) <= effectiveEnd).ToList();
         decimal Sum(IEnumerable<FinanceRecord> rows, FinanceRecordType type) => rows.Where(x => x.Type == type).Sum(x => x.Amount);
         List<Guid> Ids(IEnumerable<FinanceRecord> rows, params FinanceRecordType[] types) => rows.Where(x => types.Contains(x.Type)).Select(x => x.Id).ToList();
-        var inflow = Sum(period, FinanceRecordType.Income);
-        var fixedCost = Sum(period, FinanceRecordType.FixedCost);
+        decimal RecognizedFixed(FinanceRecord record)
+        {
+            if (record.ServiceStart is null || record.ServiceEndExclusive is null) return record.Date.Date >= range.Start && record.Date.Date <= effectiveEnd ? record.Amount : 0m;
+            var plan = new AllocationPlan { RecordId = record.Id, Amount = record.Amount, ServiceStart = record.ServiceStart.Value, ServiceEndExclusive = record.ServiceEndExclusive.Value, RecognitionMethod = record.RecognitionMethod, FormulaId = record.AllocationFormulaId };
+            return new AllocationEngine().RecognizedAmount(plan, range.Start, effectiveEnd);
+        }
+        var inflow = cashPeriod.Where(x => x.Type == FinanceRecordType.Income).Sum(x => x.Amount);
+        var fixedCost = records.Where(x => x.Type == FinanceRecordType.FixedCost).Sum(RecognizedFixed);
         var variableCost = Sum(period, FinanceRecordType.VariableCost);
-        var assetPurchasesPeriod = Sum(period, FinanceRecordType.FixedAssetPurchase);
-        var payablePaymentsPeriod = Sum(period, FinanceRecordType.PayablePayment);
-        var outflow = fixedCost + variableCost + assetPurchasesPeriod + payablePaymentsPeriod;
-        var cash = Sum(point, FinanceRecordType.Income) - Sum(point, FinanceRecordType.FixedCost) - Sum(point, FinanceRecordType.VariableCost) - Sum(point, FinanceRecordType.FixedAssetPurchase) - Sum(point, FinanceRecordType.PayablePayment);
+        var assetPurchasesPeriod = cashPeriod.Where(x => x.Type == FinanceRecordType.FixedAssetPurchase).Sum(x => x.Amount);
+        var payablePaymentsPeriod = cashPeriod.Where(x => x.Type == FinanceRecordType.PayablePayment).Sum(x => x.Amount);
+        var outflow = cashPeriod.Where(x => x.Type != FinanceRecordType.Income).Sum(x => Math.Abs(AccountEngine.CashFlow(x)));
+        var cash = point.Sum(AccountEngine.CashFlow);
         var fixedAssets = Sum(point, FinanceRecordType.FixedAssetPurchase);
         var payables = Math.Max(0, Sum(point, FinanceRecordType.PayableCreated) - Sum(point, FinanceRecordType.PayablePayment));
         var totalAssets = cash + fixedAssets;
@@ -61,12 +68,12 @@ public sealed class MetricEngine
         var allPointIds = Ids(point, FinanceRecordType.Income, FinanceRecordType.FixedCost, FinanceRecordType.VariableCost, FinanceRecordType.FixedAssetPurchase, FinanceRecordType.PayablePayment);
         var result = new Dictionary<string, MetricValue>
         {
-            ["inflow"] = Ready("inflow", inflow, "Σ 现金流入", Ids(period, FinanceRecordType.Income)),
-            ["outflow"] = Ready("outflow", outflow, "固定成本 + 可变成本 + 固定资产购置 + 应付账款支付", Ids(period, FinanceRecordType.FixedCost, FinanceRecordType.VariableCost, FinanceRecordType.FixedAssetPurchase, FinanceRecordType.PayablePayment)),
+            ["inflow"] = Ready("inflow", inflow, "Σ 现金流入", Ids(cashPeriod, FinanceRecordType.Income)),
+            ["outflow"] = Ready("outflow", outflow, "固定成本 + 可变成本 + 固定资产购置 + 应付账款支付", cashPeriod.Where(x => x.Type != FinanceRecordType.Income).Select(x => x.Id).ToList()),
             ["netflow"] = Ready("netflow", inflow - outflow, "现金流入 − 现金流出", Ids(period, FinanceRecordType.Income, FinanceRecordType.FixedCost, FinanceRecordType.VariableCost, FinanceRecordType.FixedAssetPurchase, FinanceRecordType.PayablePayment)),
             ["cash"] = Ready("cash", cash, "截至期末累计流入 − 累计现金流出", allPointIds),
             ["liquidity"] = Ready("liquidity", cash, "可立即使用的现金储备", allPointIds),
-            ["fixedcost"] = Ready("fixedcost", fixedCost, "Σ 固定成本", Ids(period, FinanceRecordType.FixedCost)),
+            ["fixedcost"] = Ready("fixedcost", fixedCost, "服务期内已确认固定成本", records.Where(x => x.Type == FinanceRecordType.FixedCost && RecognizedFixed(x) != 0).Select(x => x.Id).ToList()),
             ["variablecost"] = Ready("variablecost", variableCost, "Σ 可变成本", Ids(period, FinanceRecordType.VariableCost)),
             ["totalcost"] = Ready("totalcost", cost, "固定成本 + 可变成本", Ids(period, FinanceRecordType.FixedCost, FinanceRecordType.VariableCost)),
             ["nonessential"] = Ready("nonessential", nonEssential, "Σ 标记为非必要的成本", period.Where(x => x.IsNonEssential).Select(x => x.Id).ToList()),
@@ -79,15 +86,37 @@ public sealed class MetricEngine
             ["burn"] = burn is null ? Missing("burn", "insufficient", "最近 3 个完整月平均生活成本") : Ready("burn", burn.Value, "最近 3 个完整月生活成本 ÷ 3", burnRows.Select(x => x.Id).ToList()),
             ["runway"] = burn is null ? Missing("runway", "insufficient", "现金储备 ÷ Burn Rate") : burn == 0 ? Missing("runway", "no-burn", "暂无消耗") : Ready("runway", runway!.Value, "现金储备 ÷ Burn Rate", allPointIds.Concat(burnRows.Select(x => x.Id)).Distinct().ToList()),
             ["chain"] = burn is null ? Missing("chain", "insufficient", "现金储备 ÷ Burn Rate") : burn == 0 ? Missing("chain", "no-burn", "暂无消耗") : Ready("chain", runway!.Value, "现金储备 ÷ Burn Rate", allPointIds.Concat(burnRows.Select(x => x.Id)).Distinct().ToList()),
-            ["dependency"] = inflow == 0 ? Missing("dependency", "not-computable", "父母支持收入 ÷ 总收入") : Ready("dependency", parentIncome / inflow * 100m, "父母支持收入 ÷ 总收入 × 100%", Ids(period, FinanceRecordType.Income)),
-            ["concentration"] = inflow == 0 ? Missing("concentration", "not-computable", "最大单一收入来源 ÷ 总收入") : Ready("concentration", sourceGroups.DefaultIfEmpty(0).Max() / inflow * 100m, "最大单一收入来源 ÷ 总收入 × 100%", Ids(period, FinanceRecordType.Income)),
-            ["selfsufficiency"] = outflow == 0 ? Missing("selfsufficiency", "not-computable", "自主收入 ÷ 现金流出") : Ready("selfsufficiency", ownIncome / outflow * 100m, "自主收入 ÷ 现金流出 × 100%", period.Where(x => x.Type == FinanceRecordType.Income && x.IsSelfGeneratedIncome).Select(x => x.Id).Concat(Ids(period, FinanceRecordType.FixedCost, FinanceRecordType.VariableCost, FinanceRecordType.FixedAssetPurchase, FinanceRecordType.PayablePayment)).ToList()),
+            ["dependency"] = inflow == 0 ? Missing("dependency", "not-computable", "父母支持收入 ÷ 总收入") : Ready("dependency", parentIncome / inflow * 100m, "父母支持收入 ÷ 总收入 × 100%", Ids(cashPeriod, FinanceRecordType.Income)),
+            ["concentration"] = inflow == 0 ? Missing("concentration", "not-computable", "最大单一收入来源 ÷ 总收入") : Ready("concentration", sourceGroups.DefaultIfEmpty(0).Max() / inflow * 100m, "最大单一收入来源 ÷ 总收入 × 100%", Ids(cashPeriod, FinanceRecordType.Income)),
+            ["selfsufficiency"] = outflow == 0 ? Missing("selfsufficiency", "not-computable", "自主收入 ÷ 现金流出") : Ready("selfsufficiency", ownIncome / outflow * 100m, "自主收入 ÷ 现金流出 × 100%", period.Where(x => x.Type == FinanceRecordType.Income && x.IsSelfGeneratedIncome).Select(x => x.Id).Concat(cashPeriod.Where(x => x.Type != FinanceRecordType.Income).Select(x => x.Id).ToList()).ToList()),
             ["safetycoverage"] = safetyTarget <= 0 ? Missing("safetycoverage", "not-computable", "现金储备 ÷ 安全垫目标") : Ready("safetycoverage", cash / safetyTarget * 100m, "现金储备 ÷ 安全垫目标 × 100%", allPointIds)
         };
         foreach (var custom in customMetrics ?? [])
         {
-            var rows = period.Where(x => x.CustomMetricId == custom.Id).ToList();
+            var rows = period.Where(x => x.CustomMetricId == custom.Id || x.MetricTargetIds.Contains(custom.Id)).ToList();
             result[custom.Id] = Ready(custom.Id, rows.Sum(x => x.Type == FinanceRecordType.CustomDecrease ? -x.Amount : x.Amount), "Σ 增加 − Σ 减少", rows.Select(x => x.Id).ToList());
+        }
+        var formulaById = (formulaDefinitions ?? []).ToDictionary(x => x.Id);
+        var formulaEngine = new FormulaEngine();
+        foreach (var definition in (metricDefinitions ?? []).Where(x => x.IsEnabled && !x.IsArchived))
+        {
+            if (!formulaById.TryGetValue(definition.FormulaId, out var formula)) continue;
+            var directRows = period.Where(x => x.CustomMetricId == definition.Id || x.MetricTargetIds.Contains(definition.Id)).ToList();
+            var variables = new Dictionary<string, decimal>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["base:recordAmount"] = period.Sum(x => x.Amount), ["base:accumulatedDepreciation"] = 0m,
+                ["base:metricValue"] = 0m, ["direct:self"] = directRows.Sum(x => x.Type == FinanceRecordType.CustomDecrease ? -x.Amount : x.Amount)
+            };
+            foreach (var value in result.Values.Where(x => x.Value is not null)) variables[$"metric:{value.Id}"] = value.Value!.Value;
+            try
+            {
+                var value = formulaEngine.Evaluate(formula, variables);
+                result[definition.Id] = Ready(definition.Id, value, "自定义结构化公式", directRows.Select(x => x.Id).ToList());
+            }
+            catch (BridgeException exception)
+            {
+                result[definition.Id] = Missing(definition.Id, "not-computable", exception.Message);
+            }
         }
         return result;
     }
