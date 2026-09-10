@@ -1,23 +1,16 @@
-export type Page = 'overview' | 'metrics' | 'records' | 'analysis' | 'data';
-
-export type Metric = {
-  id: string; name: string; subtitle: string; displayValue: string;
-  rawValue?: number | null; canRecord: boolean; isCustom: boolean;
-  isHidden: boolean; isEnabled: boolean; displayFormat: 'Currency' | 'Number' | 'Percent';
-};
-
-export type LedgerRecord = {
-  id: string; date: string; type: string; typeLabel: string; amount: number;
-  displayAmount: string; category: string; account: string; note: string; customMetricId?: string | null;
-};
-
-export type Snapshot = {
-  metrics: Metric[]; records: LedgerRecord[]; hideAllAmounts: boolean;
-  themeName: string; customThemeCss?: string | null; dataFile: string;
-  analysis: { empty: boolean; income: number; fixedCost: number; variableCost: number; dependency: number; fixedCostRatio: number; verdict: string };
-};
-
-export type RecordDraft = {
-  date: string; type: string; amount: number; category: string; account: string;
-  note: string; customMetricId?: string | null;
-};
+export type Page='overview'|'metrics'|'records'|'analysis'|'settings'|'metric-detail'|'warnings';
+export type Period='day'|'week'|'month'|'lastMonth'|'year'|'all'|'custom';
+export type Metric={id:string;name:string;subtitle:string;displayValue:string;rawValue?:number|null;canRecord:boolean;isCustom:boolean;isHidden:boolean;isEnabled:boolean;displayFormat:'Currency'|'Number'|'Percent';dataStatus?:string;periodLabel?:string;hasActiveWarning?:boolean};
+export type MetricContribution={recordId:string;date:string;label:string;amount:number;displayAmount:string;direction:'positive'|'negative'|'neutral';explanation:string};
+export type MetricDetail={metric:Metric;periodLabel:string;value:number|null;comparisonValue?:number|null;definition:string;formula:string;dataStatus:string;trend:{label:string;value:number}[];components?:{label:string;value:number|null;sourceMetricId?:string;status?:string}[];contributions:MetricContribution[]};
+export type LedgerRecord={id:string;date:string;type:string;typeLabel:string;amount:number;displayAmount:string;category:string;account:string;note:string;customMetricId?:string|null;incomeSource?:string|null;isSelfGeneratedIncome?:boolean;isNonEssential?:boolean;createdAt?:string;updatedAt?:string;deletedAt?:string|null};
+export type WarningCondition={metricId:string;operator:'>'|'>='|'<'|'<='|'=';threshold:number;comparisonMode:'threshold'|'previousChangePercent'|'averageChangePercent'|'consecutivePositive'|'consecutiveNegative';comparisonWindow:number};
+export type WarningRule={id:string;name:string;description?:string;metricId:string;operator:WarningCondition['operator'];threshold:number;unit?:string;period:'day'|'week'|'month'|'year';comparisonMode?:WarningCondition['comparisonMode'];comparisonWindow?:number;consecutivePeriods?:number;severity:'关注'|'重要'|'严重';repeatPolicy?:string;cooldownHours?:number;effectiveFrom?:string|null;effectiveTo?:string|null;notificationMethod?:string;showAmountInNotification?:boolean;enabled:boolean;conditions?:WarningCondition[]};
+export type WarningEvent={id:string;ruleId:string;status:'active'|'read'|'snoozed'|'resolved'|'ignored';measuredValue:number|null;threshold:number;periodStart:string;periodEnd:string;triggeredAt:string;lastEvaluatedAt:string;resolvedAt?:string|null;snoozedUntil?:string|null;evidenceRecordIds:string[];explanation:string};
+export type LedgerSettings={notificationsEnabled:boolean;autoBackupEnabled:boolean;autoBackupIntervalDays:number;autoBackupRetentionCount:number;lastAutoBackupAt?:string|null;lastSettingsSection:string;currencySymbol:string;safetyBufferTarget:number};
+export type RecoveryState={required:boolean;message?:string|null;damagedFile?:string|null;availableSnapshots:string[]};
+export type Snapshot={metrics:Metric[];records:LedgerRecord[];deletedRecords:LedgerRecord[];hideAllAmounts:boolean;themeName:string;customThemeCss?:string|null;dataFile:string;dataDirectory?:string;dataFileSize?:number;analysis:{empty:boolean;income:number;fixedCost:number;variableCost:number;dependency:number|null;fixedCostRatio:number;verdict:string};warningRules:WarningRule[];warningEvents:WarningEvent[];settings:LedgerSettings;recovery:RecoveryState;schemaVersion:number;backupFormatVersion?:number;appVersion?:string;dataIntegrityStatus?:string;lastSavedAt?:string;lastBackupAt?:string|null;lastBackupPath?:string|null;lastProtectionSnapshot?:string|null;recordCount:number;deletedRecordCount:number;customMetricCount:number;warningRuleCount:number;selectedPeriod?:Period;periodLabel?:string};
+export type RecordDraft={date:string;type:string;amount:number;category:string;account:string;note:string;customMetricId?:string|null;incomeSource?:string|null;isSelfGeneratedIncome?:boolean;isNonEssential?:boolean};
+export type ReportPoint={label:string;income:number;outflow:number;net:number;fixedCost:number;variableCost:number;assets:number;payables:number;recordIds:string[]};
+export type ReportCategory={label:string;value:number;recordIds:string[]};
+export type ReportData={kind:string;periodLabel:string;generatedAt:string;unit:string;dataStatus:string;metrics:Record<string,number|null>;metricStatus:Record<string,string>;comparison:Record<string,number|null>;series:ReportPoint[];costCategories:ReportCategory[];incomeSources:ReportCategory[];recordIds:string[];summary:string;upcomingPayables:number;openingCash:number|null;closingCash:number|null;largestRecordId?:string|null};

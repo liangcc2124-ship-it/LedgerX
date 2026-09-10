@@ -13,7 +13,9 @@ export function Icon({ name, size = 19 }: { name: string; size?: number }) {
     plus: <><path d="M12 5v14M5 12h14" /></>, close: <><path d="m6 6 12 12M18 6 6 18" /></>,
     trash: <><path d="M4 7h16M9 7V4h6v3m-9 0 1 14h10l1-14M10 11v6M14 11v6" /></>,
     chevron: <><path d="m9 18 6-6-6-6" /></>, wallet: <><path d="M4 7h16v12H4zM4 7l2-3h10l2 3M15 12h5" /></>,
-    shield: <><path d="M12 3 5 6v5c0 5 3 8 7 10 4-2 7-5 7-10V6l-7-3Z" /><path d="m9 12 2 2 4-4" /></>
+    shield: <><path d="M12 3 5 6v5c0 5 3 8 7 10 4-2 7-5 7-10V6l-7-3Z" /><path d="m9 12 2 2 4-4" /></>,
+    bell: <><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9ZM10 21h4" /></>,
+    info: <><circle cx="12" cy="12" r="9" /><path d="M12 11v5M12 8h.01" /></>
   };
   return <svg aria-hidden="true" width={size} height={size} viewBox="0 0 24 24" fill={name === 'overview' ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">{paths[name]}</svg>;
 }

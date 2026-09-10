@@ -4,11 +4,13 @@
   <p>把财务指标放到桌面上。钱没有变多，但至少终于知道它去哪了。</p>
 </div>
 
-当前版本：v2.0.0
+当前版本：v2.1.0
+
+下一版计划：[LedgerX v2.1 正式迭代需求文档](docs/LedgerX-v2.1-正式迭代需求文档.md)
 
 LedgerX 是一款面向个人使用的 Windows 桌面财务管理软件。它不连接银行卡、不上传云端、不要求注册，也不会在你买完奶茶后弹出一句“请反思消费观”。你只需手动记账，它负责把记录变成现金、成本、资产、负债和资金链指标。
 
-![LedgerX v2.0 财务总览](docs/design/ledgerx-webview-v2.png)
+![LedgerX v2.1 财务总览](docs/design/ledgerx-webview-v2.png)
 
 ## 为什么做它
 
@@ -20,9 +22,12 @@ LedgerX 是一款面向个人使用的 Windows 桌面财务管理软件。它不
 - **自定义指标**：创建金额、数值或百分比指标，并按日期记录增加与减少。
 - **自动联动**：一笔现金流入会同步更新现金储备、净现金流和总资产，不必拿计算器进行二次创作。
 - **隐私模式**：全部金额或单个指标均可隐藏。适合公共场合，也适合暂时不想面对现实的下午。
-- **财务分析**：根据已有记录计算成本结构、财务依赖度与资金状态。
+- **财务分析**：日报、周报、月报、年报与可视化报表，支持周期比较和下钻。
+- **指标详情**：点击指标即可查看构成数据、趋势、公式和来源记录。
+- **记录纠错**：记录可编辑，删除后进入回收站，可恢复或永久删除。
+- **设置中心**：数据、备份、皮肤、通知和诊断日志统一收纳，首页保持清爽。
 - **本地优先**：数据只保存在当前电脑，没有账号、订阅费和“云端惊喜”。
-- **备份恢复**：通过 JSON 文件导出和恢复账本。
+- **安全备份**：备份包含版本、内容摘要和 SHA-256 完整性校验；恢复前先预览，恢复与清空前自动留一份保护快照。
 - **可换肤**：自带暖铜、石墨、深海蓝皮肤，也支持安全的 CSS 变量主题。
 
 ## 技术栈
@@ -56,10 +61,11 @@ npm run build
 cd ..
 dotnet build native\LedgerX.Native.csproj
 dotnet run --project native\LedgerX.Native.csproj
+dotnet test native.tests\LedgerX.Tests.csproj -c Release
 dotnet publish native\LedgerX.Native.csproj -c Release -o release-native
 ~~~
 
-发布结果位于 `release-native\LedgerX.exe`。
+发布结果位于 `release-native\LedgerX.exe`。前端 Playwright 回归测试可用 `cd web; npm test` 运行，原生指标、预警、报告和备份单测可用上面的 `dotnet test` 运行。
 
 ## 自定义皮肤
 

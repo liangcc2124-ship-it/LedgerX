@@ -24,7 +24,12 @@ public sealed class FinanceRecord
     public string Account { get; set; } = "现金储备";
     public string Note { get; set; } = string.Empty;
     public string? CustomMetricId { get; set; }
+    public string? IncomeSource { get; set; }
+    public bool IsSelfGeneratedIncome { get; set; }
+    public bool IsNonEssential { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.Now;
+    public DateTime UpdatedAt { get; set; } = DateTime.Now;
+    public DateTime? DeletedAt { get; set; }
 
     [JsonIgnore]
     public string TypeLabel => Type switch

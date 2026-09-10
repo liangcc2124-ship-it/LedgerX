@@ -1,0 +1,6 @@
+import type { Snapshot } from '../types';
+import { Icon } from '../icons';
+export function Recovery({state,onCommand}:{state:Snapshot;onCommand:(command:string,payload?:unknown)=>Promise<unknown>}){
+ const recovery=state.recovery;
+ return <main className="recovery-page"><section className="recovery-card"><img src="./ledgerx-icon.png" alt="LedgerX"/><div className="recovery-icon"><Icon name="shield" size={28}/></div><h1>账本需要恢复</h1><p>LedgerX 没有用空账本覆盖原文件。损坏副本已经保留，你可以恢复备份、打开数据目录检查，或明确创建一个新账本。</p><dl><div><dt>原因</dt><dd>{recovery.message||'账本无法读取'}</dd></div><div><dt>损坏副本</dt><dd>{recovery.damagedFile||'已保留在数据目录'}</dd></div><div><dt>保护快照</dt><dd>{recovery.availableSnapshots.length} 个可用</dd></div></dl><div className="button-row"><button className="button primary" onClick={()=>onCommand('restore')}>恢复备份</button><button className="button ghost" onClick={()=>onCommand('openDataFolder')}>打开数据目录</button><button className="button ghost danger-text" onClick={()=>confirm('确定放弃损坏账本并创建空账本吗？损坏副本仍会保留。')&&onCommand('createEmptyAfterRecovery')}>创建空账本</button></div></section></main>
+}

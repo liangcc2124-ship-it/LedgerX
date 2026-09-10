@@ -1,0 +1,13 @@
+import type { MetricDetail } from '../types';
+
+export function MiniTrend({data,hidden=false,title='现金流趋势'}:{data:{label:string;value:number}[];hidden?:boolean;title?:string}){
+ const points=data.length?data:[{label:'—',value:0}]; const max=Math.max(...points.map(x=>Math.abs(x.value)),1); const width=640; const height=150; const path=points.map((p,i)=>{const x=20+(i/(Math.max(points.length-1,1)))*(width-40); const y=height/2-(p.value/max)*(height/2-18); return (i?'L':'M')+x.toFixed(1)+' '+y.toFixed(1)}).join(' ');
+ return <div className="chart-card"><div className="chart-heading"><b>{title}</b><span>{points.length} 个数据点</span></div><svg viewBox={'0 0 '+width+' '+height} role="img" aria-label={title}><line x1="20" x2={width-20} y1={height/2} y2={height/2} className="chart-zero"/><path d={path} className="chart-line"/><g className="chart-labels">{points.filter((_,i)=>i===0||i===points.length-1||points.length<7).map((p,i)=><text key={p.label+i} x={20+(i/(Math.max(points.length-1,1)))*(width-40)} y={height-5}>{p.label}</text>)}</g></svg>{hidden&&<div className="chart-mask">••••••</div>}</div>
+}
+
+export function MetricTrend({detail,hidden}:{detail:MetricDetail;hidden:boolean}){return <MiniTrend data={detail.trend} hidden={hidden} title={detail.metric.name+'趋势'}/>}
+
+export function ReportChart({rows,hidden=false,visible={income:true,outflow:true,net:true},onPoint}:{rows:{label:string;income:number;outflow:number;net:number;recordIds?:string[]}[];hidden?:boolean;visible?:{income:boolean;outflow:boolean;net:boolean};onPoint?:(ids:string[])=>void}){
+ const max=Math.max(...rows.flatMap(r=>[visible.income?r.income:0,visible.outflow?r.outflow:0,visible.net?Math.abs(r.net):0]),1);const data=rows.length?rows:[{label:'暂无',income:0,outflow:0,net:0,recordIds:[]}];
+ return <div className="chart-card"><div className="bar-chart" role="img" aria-label="现金流变化柱形图">{data.map(r=><button className="bar-group" key={r.label} onClick={()=>onPoint?.(r.recordIds||[])} title={hidden?r.label:`${r.label} 流入 ${r.income} 流出 ${r.outflow} 净流 ${r.net}`}><span className="bars">{visible.income?<i className="bar income-bar" style={{height:Math.max(4,r.income/max*100)+'%'}}/>:null}{visible.outflow?<i className="bar outflow-bar" style={{height:Math.max(4,r.outflow/max*100)+'%'}}/>:null}{visible.net?<i className="bar net-bar" style={{height:Math.max(4,Math.abs(r.net)/max*100)+'%'}}/>:null}</span><small>{r.label}</small></button>)}</div>{hidden?<div className="chart-mask">••••••</div>:null}</div>
+}
