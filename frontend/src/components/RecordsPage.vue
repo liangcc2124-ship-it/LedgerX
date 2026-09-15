@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, ref } from 'vue';
+import { computed, nextTick, onMounted, ref, watch } from 'vue';
 import { ApiClientError, createRequestId, requestApiJson } from '../apiClient.js';
 
 const today = () => {
@@ -18,6 +18,8 @@ const message = ref('');
 const formOpen = ref(false);
 const editing = ref(null);
 const form = ref(blankForm());
+const formDialog = ref(null);
+const lastFocusedElement = ref(null);
 
 function blankForm() {
   const date = today();
@@ -53,13 +55,24 @@ function loadRecords() {
 }
 
 function retry(part) { if (part === 'records') loadRecords(); else loadCatalog(); }
-function openCreate() { editing.value = null; form.value = blankForm(); message.value = ''; formOpen.value = true; }
+function rememberFocus() {
+  lastFocusedElement.value = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+}
+function openCreate() { rememberFocus(); editing.value = null; form.value = blankForm(); message.value = ''; formOpen.value = true; }
 function openEdit(record) {
+  rememberFocus();
   editing.value = record;
   form.value = { recordType: record.recordType, amount: record.amount, occurredOn: record.occurredOn, categoryId: record.category.id, accountId: record.settlement.account.id, settlementOn: record.settlement.settlementOn, note: record.note };
   formOpen.value = true; message.value = '';
 }
-function closeForm() { formOpen.value = false; editing.value = null; }
+function closeForm() {
+  formOpen.value = false;
+  editing.value = null;
+  void nextTick(() => {
+    if (lastFocusedElement.value?.isConnected) lastFocusedElement.value.focus();
+    lastFocusedElement.value = null;
+  });
+}
 function onTypeChange() { if (!usableCategories.value.some((category) => category.id === form.value.categoryId)) form.value.categoryId = ''; }
 
 function validate() {
@@ -99,6 +112,11 @@ async function restore(record) {
 }
 
 onMounted(() => { loadCatalog(); loadRecords(); });
+
+watch(formOpen, (open) => {
+  if (!open) return;
+  void nextTick(() => formDialog.value?.querySelector('input[inputmode="decimal"]')?.focus());
+});
 </script>
 
 <template>
@@ -107,7 +125,7 @@ onMounted(() => { loadCatalog(); loadRecords(); });
       <div><h2 id="records-page-title" tabindex="-1">收支记录</h2><p>收入、固定支出和弹性支出。</p></div>
       <button type="button" :disabled="!activeAccounts.length || loading.accounts" @click="openCreate">新增记录</button>
     </div>
-    <p v-if="message" class="records-message" role="status" aria-live="polite">{{ message }}</p>
+    <p v-if="message && !formOpen" class="records-message" role="status" aria-live="polite">{{ message }}</p>
     <div v-if="loading.accounts" class="records-state">正在读取账户…</div>
     <div v-else-if="errors.accounts" class="records-state records-error">{{ errors.accounts }} <button type="button" @click="retry('accounts')">重试</button></div>
     <div v-else class="balance-grid"><article v-for="account in activeAccounts" :key="account.id"><span>{{ account.name }}</span><strong>{{ account.balance }} {{ account.currency }}</strong><small>{{ account.balanceSide }}</small></article><p v-if="!activeAccounts.length">请先在分类与账户中新增账户。</p></div>
@@ -118,8 +136,29 @@ onMounted(() => { loadCatalog(); loadRecords(); });
     <p v-else-if="!records.length" class="records-empty">{{ trash ? '回收站为空。' : '还没有记录。' }}</p>
     <ul v-else class="record-list"><li v-for="record in records" :key="record.id"><div><strong>{{ record.occurredOn }} · {{ record.recordType === 'INCOME' ? '收入' : record.recordType === 'FIXED_COST' ? '固定支出' : '弹性支出' }}</strong><span>{{ record.category.name }} · {{ record.settlement.account.name }} · {{ record.note || '无备注' }}</span></div><strong>{{ record.amount }} {{ record.currency }}</strong><div class="record-actions"><button v-if="!trash" type="button" @click="openEdit(record)">编辑</button><button v-if="!trash" type="button" @click="remove(record)">删除</button><button v-else type="button" @click="restore(record)">恢复</button></div></li></ul>
 
-    <form v-if="formOpen" class="record-form" @submit.prevent="save"><h3>{{ editing ? '编辑记录' : '新增记录' }}</h3><label>类型<select v-model="form.recordType" @change="onTypeChange"><option value="INCOME">收入</option><option value="FIXED_COST">固定支出</option><option value="VARIABLE_COST">弹性支出</option></select></label><label>金额<input v-model="form.amount" inputmode="decimal" autocomplete="off" placeholder="0.00"></label><label>发生日期<input v-model="form.occurredOn" type="date"></label><label>分类<select v-model="form.categoryId"><option value="" disabled>请选择分类</option><option v-for="category in usableCategories" :key="category.id" :value="category.id">{{ category.name }}</option></select></label><label>结算账户<select v-model="form.accountId"><option value="" disabled>请选择账户</option><option v-for="account in activeAccounts" :key="account.id" :value="account.id">{{ account.name }}</option></select></label><label>结算日期<input v-model="form.settlementOn" type="date"></label><label>备注<textarea v-model="form.note" maxlength="4000" rows="3"></textarea></label><div class="form-actions"><button type="submit">保存</button><button type="button" @click="closeForm">取消</button></div></form>
   </section>
+
+  <Teleport to="body">
+    <div v-if="formOpen" class="modal-backdrop" @click.self="closeForm" @keydown.esc="closeForm">
+      <section ref="formDialog" class="record-modal" role="dialog" aria-modal="true" aria-labelledby="record-form-title" tabindex="-1">
+        <div class="modal-heading">
+          <h3 id="record-form-title">{{ editing ? '编辑记录' : '新增记录' }}</h3>
+          <button type="button" class="modal-close" aria-label="关闭表单" @click="closeForm">×</button>
+        </div>
+        <p v-if="message" class="modal-message" role="status" aria-live="polite">{{ message }}</p>
+        <form class="record-form" @submit.prevent="save">
+          <label>类型<select v-model="form.recordType" @change="onTypeChange"><option value="INCOME">收入</option><option value="FIXED_COST">固定支出</option><option value="VARIABLE_COST">弹性支出</option></select></label>
+          <label>金额<input v-model="form.amount" inputmode="decimal" autocomplete="off" placeholder="0.00"></label>
+          <label>发生日期<input v-model="form.occurredOn" type="date"></label>
+          <label>分类<select v-model="form.categoryId"><option value="" disabled>请选择分类</option><option v-for="category in usableCategories" :key="category.id" :value="category.id">{{ category.name }}</option></select></label>
+          <label>结算账户<select v-model="form.accountId"><option value="" disabled>请选择账户</option><option v-for="account in activeAccounts" :key="account.id" :value="account.id">{{ account.name }}</option></select></label>
+          <label>结算日期<input v-model="form.settlementOn" type="date"></label>
+          <label>备注<textarea v-model="form.note" maxlength="4000" rows="3"></textarea></label>
+          <div class="form-actions"><button type="submit">保存</button><button type="button" @click="closeForm">取消</button></div>
+        </form>
+      </section>
+    </div>
+  </Teleport>
 </template>
 
 <style scoped>
@@ -312,4 +351,119 @@ button { min-height: 2.35rem; padding: .4rem .75rem; border: 1px solid #295ecb; 
   }
 }
 @media (max-width: 36rem) { .record-list li { grid-template-columns: 1fr; } .record-actions button { flex: 1; } .records-heading > button { width: 100%; } }
+
+.modal-backdrop {
+  position: fixed;
+  z-index: 20;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 1.25rem;
+  overflow: auto;
+  background: rgba(37, 35, 33, 0.28);
+}
+
+.record-modal {
+  width: min(100%, 42rem);
+  max-height: calc(100vh - 2.5rem);
+  overflow: auto;
+  padding: 1.5rem;
+  border: 1px solid var(--border-color);
+  border-radius: 0.7rem;
+  background: var(--surface);
+  box-shadow: 0 1.5rem 4rem rgba(37, 35, 33, 0.2);
+}
+
+.modal-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.modal-heading h3 {
+  margin: 0;
+  color: var(--text);
+  font-size: 1.3rem;
+}
+
+.modal-close {
+  display: grid;
+  place-items: center;
+  width: 2.5rem;
+  min-height: 2.5rem;
+  padding: 0;
+  border-color: transparent;
+  background: transparent;
+  color: var(--muted-text);
+  font-size: 1.7rem;
+  line-height: 1;
+}
+
+.modal-close:hover {
+  background: var(--accent-soft);
+  color: var(--accent-hover);
+}
+
+.record-modal .record-form {
+  max-width: none;
+  margin-top: 1.25rem;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.record-modal .record-form button {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #fff;
+}
+
+.record-modal .record-form button:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+
+.record-modal .record-form .form-actions {
+  position: sticky;
+  bottom: -1px;
+  padding-top: 0.8rem;
+  background: var(--surface);
+}
+
+.record-modal .record-form .form-actions button:last-child {
+  border-color: var(--border-color);
+  background: transparent;
+  color: var(--muted-text);
+}
+
+.record-modal .record-form .form-actions button:last-child:hover:not(:disabled) {
+  background: var(--accent-soft);
+  color: var(--accent-hover);
+}
+
+.modal-message {
+  margin: 1rem 0 0;
+  padding: 0.8rem 0.9rem;
+  border: 1px solid #e4c5c0;
+  border-radius: 0.45rem;
+  background: #fbefec;
+  color: var(--danger);
+  line-height: 1.5;
+}
+
+@media (max-width: 36rem) {
+  .modal-backdrop {
+    place-items: start center;
+    padding: 0.75rem;
+  }
+
+  .record-modal {
+    max-height: calc(100vh - 1.5rem);
+    padding: 1.15rem;
+  }
+}
 </style>

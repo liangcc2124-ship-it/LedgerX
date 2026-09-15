@@ -24,6 +24,8 @@ test('loads server balances and submits a closed basic record draft', async ({ p
   await openRecords(page, requests);
   await expect(page.getByText('现金')).toBeVisible();
   await page.getByRole('button', { name: '新增记录' }).click();
+  await expect(page.getByRole('dialog')).toBeVisible();
+  await expect(page.getByRole('heading', { name: '新增记录' })).toBeVisible();
   await page.getByLabel('金额').fill('12.30');
   await page.getByLabel('分类').selectOption(category.id);
   await page.getByLabel('结算账户').selectOption(account.id);
@@ -38,6 +40,21 @@ test('loads server balances and submits a closed basic record draft', async ({ p
   expect(body.currency).toBe('CNY');
   expect(body.settlement.mode).toBe('PAID_FROM_ACCOUNT');
   expect(body).not.toHaveProperty('balance');
+});
+
+test('opens the record form in a modal and closes it with Escape', async ({ page }) => {
+  const requests = [];
+  await openRecords(page, requests);
+
+  const createButton = page.getByRole('button', { name: '新增记录' });
+  await createButton.click();
+  await expect(page.getByRole('dialog')).toBeVisible();
+  await expect(page.getByLabel('金额')).toBeFocused();
+
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await expect(createButton).toBeFocused();
+  expect(requests).toHaveLength(0);
 });
 
 test('does not send delete when confirmation is cancelled', async ({ page }) => {

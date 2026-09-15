@@ -270,7 +270,7 @@ onUnmounted(() => {
             <ProfilesPage v-else-if="activePage === 'profiles'" @profile-activation-complete="refreshAfterProfileActivation" />
             <SettingsPage v-else-if="activePage === 'settings'" @profile-activation-complete="refreshAfterProfileActivation" />
             <CatalogPage v-else-if="activePage === 'catalog'" />
-            <RecordsPage v-else @profile-activation-complete="refreshAfterProfileActivation" />
+            <RecordsPage v-else />
           </div>
         </section>
       </div>
