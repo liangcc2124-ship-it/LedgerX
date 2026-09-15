@@ -12,6 +12,13 @@ const STARTUP_DEADLINE_MS = 15_000;
 const view = ref({ kind: 'loading', data: null, error: null });
 const folderFeedback = ref('');
 const activePage = ref('home');
+const pageTitles = {
+  home: '财务总览',
+  profiles: '用户空间',
+  settings: '设置与备份说明',
+  catalog: '分类与账户',
+  records: '收支记录',
+};
 
 let generation = 0;
 let pollTimer = null;
@@ -62,7 +69,7 @@ function selectPage(page) {
   activePage.value = page;
   void nextTick(() => {
     const headingId = page === 'profiles' ? 'profiles-page-title'
-      : page === 'settings' ? 'settings-page-title' : page === 'catalog' ? 'catalog-page-title' : page === 'records' ? 'records-page-title' : 'page-title';
+      : page === 'settings' ? 'settings-page-title' : page === 'catalog' ? 'catalog-page-title' : page === 'records' ? 'records-page-title' : 'home-page-title';
     document.getElementById(headingId)?.focus();
   });
 }
@@ -203,7 +210,73 @@ onUnmounted(() => {
 
 <template>
   <main class="page-shell">
-    <section class="status-card" aria-labelledby="page-title">
+    <template v-if="view.kind === 'ready'">
+      <div class="app-shell">
+        <aside class="app-sidebar">
+          <div class="brand-lockup" aria-label="LedgerX">
+            <span class="brand-mark" aria-hidden="true">L</span>
+            <span class="brand-name">LedgerX</span>
+          </div>
+          <p class="sidebar-caption">本地财务工作台</p>
+
+          <nav class="main-navigation" aria-label="主导航">
+            <button type="button" :class="['nav-button', { 'is-selected': activePage === 'home' }]" :aria-current="activePage === 'home' ? 'page' : undefined" @click="selectPage('home')">
+              <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m4 10 8-6 8 6v9a1 1 0 0 1-1 1h-5v-6h-4v6H5a1 1 0 0 1-1-1z" /></svg></span><span>首页</span>
+            </button>
+            <button type="button" :class="['nav-button', { 'is-selected': activePage === 'profiles' }]" :aria-current="activePage === 'profiles' ? 'page' : undefined" @click="selectPage('profiles')">
+              <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="3" /><path d="M5 20a7 7 0 0 1 14 0M18 5.5a3 3 0 0 1 0 5.2" /></svg></span><span>用户空间</span>
+            </button>
+            <button type="button" :class="['nav-button', { 'is-selected': activePage === 'catalog' }]" :aria-current="activePage === 'catalog' ? 'page' : undefined" @click="selectPage('catalog')">
+              <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h10" /></svg></span><span>分类与账户</span>
+            </button>
+            <button type="button" :class="['nav-button', { 'is-selected': activePage === 'records' }]" :aria-current="activePage === 'records' ? 'page' : undefined" @click="selectPage('records')">
+              <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M6 3h9l3 3v15H6zM14 3v4h4M9 12h6M9 16h6" /></svg></span><span>收支记录</span>
+            </button>
+            <button type="button" :class="['nav-button', { 'is-selected': activePage === 'settings' }]" :aria-current="activePage === 'settings' ? 'page' : undefined" @click="selectPage('settings')">
+              <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 8.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7Z" /><path d="m19 13 2-1-2-1-.4-1.5 1-2-2-2-2 1L14 7l-1-2h-2L10 7l-1.6.5-2-1-2 2 1 2L5 11l-2 1 2 1 .4 1.5-1 2 2 2 2-1L10 17l1 2h2l1-2 1.6-.5 2 1 2-2-1-2z" /></svg></span><span>设置</span>
+            </button>
+          </nav>
+
+          <div class="sidebar-footer">
+            <span class="connection-state"><span class="status-dot is-ready" aria-hidden="true"></span>本地服务已连接</span>
+            <span class="sidebar-version">版本 {{ view.data.applicationVersion }}</span>
+          </div>
+        </aside>
+
+        <section class="workspace" aria-label="LedgerX 工作区">
+          <header class="workspace-header">
+            <div>
+              <p class="workspace-breadcrumb">LedgerX <span aria-hidden="true">/</span> {{ pageTitles[activePage] }}</p>
+              <p class="workspace-context">版本 {{ view.data.applicationVersion }} · 状态 {{ view.data.state }}</p>
+            </div>
+            <span class="workspace-status"><span class="status-dot is-ready" aria-hidden="true"></span>已连接</span>
+          </header>
+
+          <div class="workspace-content">
+            <section v-if="activePage === 'home'" class="home-panel" aria-labelledby="home-page-title">
+              <div class="home-intro">
+                <h2 id="home-page-title" aria-label="首页" tabindex="-1">财务总览</h2>
+                <p class="home-lede">掌握你的财务现状，专注当下，规划未来。</p>
+                <p class="home-description">本地账本已经准备好。你可以从收支记录开始，逐步完善分类、账户和用户空间。</p>
+                <button type="button" class="retry-button" @click="selectPage('records')">添加第一笔记录</button>
+              </div>
+              <div class="home-divider" aria-hidden="true"></div>
+              <dl class="home-summary" aria-label="本地账本状态">
+                <div><dt>服务状态</dt><dd>已连接</dd></div>
+                <div><dt>数据位置</dt><dd>本地保存</dd></div>
+                <div><dt>当前版本</dt><dd>{{ view.data.applicationVersion }}</dd></div>
+              </dl>
+            </section>
+            <ProfilesPage v-else-if="activePage === 'profiles'" @profile-activation-complete="refreshAfterProfileActivation" />
+            <SettingsPage v-else-if="activePage === 'settings'" @profile-activation-complete="refreshAfterProfileActivation" />
+            <CatalogPage v-else-if="activePage === 'catalog'" />
+            <RecordsPage v-else @profile-activation-complete="refreshAfterProfileActivation" />
+          </div>
+        </section>
+      </div>
+    </template>
+
+    <section v-else class="status-card" aria-labelledby="page-title">
       <p class="eyebrow">LedgerX</p>
       <h1 id="page-title">本地财务工作台</h1>
 

@@ -132,5 +132,184 @@ button { min-height: 2.35rem; padding: .4rem .75rem; border: 1px solid #295ecb; 
 .record-list { list-style: none; padding: 0; margin: 0; display: grid; gap: .6rem; } .record-list li { display: grid; grid-template-columns: 1fr auto auto; gap: .8rem; align-items: center; } .record-list span { display: block; margin-top: .25rem; color: #5d6675; overflow-wrap: anywhere; }
 .record-actions button { background: white; color: #295ecb; } .record-form { display: grid; gap: .75rem; max-width: 34rem; } .record-form label { display: grid; gap: .3rem; } input, select, textarea { min-height: 2.35rem; border: 1px solid #aeb7c6; border-radius: .4rem; padding: .4rem .55rem; font: inherit; } .form-actions { justify-content: flex-end; }
 .records-state, .records-empty, .records-message { padding: .7rem; border-radius: .45rem; background: #eef4ff; } .records-error { background: #fff1f0; color: #8a1c13; } .records-error button { margin-left: .5rem; } 
+
+.records-page {
+  width: 100%;
+  max-width: none;
+  gap: 1.75rem;
+}
+
+.records-heading {
+  align-items: flex-end;
+  gap: 1.5rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.records-heading h2 {
+  margin-bottom: 0.55rem;
+  color: var(--text);
+  font-size: clamp(1.9rem, 4vw, 3rem);
+  font-weight: 650;
+  letter-spacing: -0.04em;
+}
+
+.records-heading p {
+  color: var(--muted-text);
+  line-height: 1.6;
+}
+
+.records-page button {
+  min-height: 2.75rem;
+  padding: 0.65rem 1rem;
+  border-color: var(--accent);
+  border-radius: 0.45rem;
+  background: var(--accent);
+  color: #fff;
+}
+
+.records-page button:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+
+.records-toolbar {
+  gap: 0.4rem;
+  padding-bottom: 0.35rem;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.records-toolbar button,
+.record-actions button {
+  border-color: transparent;
+  background: transparent;
+  color: var(--muted-text);
+}
+
+.records-toolbar button:hover:not(:disabled),
+.records-toolbar button.selected,
+.record-actions button:hover:not(:disabled) {
+  border-color: var(--accent-soft);
+  background: var(--accent-soft);
+  color: var(--accent-hover);
+}
+
+.balance-grid {
+  gap: 1rem;
+}
+
+.balance-grid article,
+.record-list li,
+.record-form {
+  border-color: var(--border-color);
+  border-radius: 0.55rem;
+  background: var(--surface);
+}
+
+.balance-grid article {
+  gap: 0.45rem;
+  padding: 1.15rem 1.25rem;
+}
+
+.balance-grid article span,
+.balance-grid small,
+.record-list span {
+  color: var(--muted-text);
+}
+
+.record-list {
+  gap: 0.7rem;
+}
+
+.record-list li {
+  gap: 1rem;
+  padding: 1.15rem 1.25rem;
+}
+
+.record-list li > div:first-child {
+  min-width: 0;
+}
+
+.record-list li > strong {
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.record-form {
+  max-width: 42rem;
+  gap: 1rem;
+  padding: 1.5rem;
+}
+
+.record-form h3 {
+  margin-bottom: 0.25rem;
+  color: var(--text);
+  font-size: 1.25rem;
+}
+
+.record-form label {
+  gap: 0.45rem;
+  color: var(--muted-text);
+  font-size: 0.9rem;
+}
+
+.record-form input,
+.record-form select,
+.record-form textarea {
+  min-height: 2.8rem;
+  border-color: #cfc7bd;
+  border-radius: 0.4rem;
+  background: #fff;
+}
+
+.form-actions {
+  margin-top: 0.35rem;
+}
+
+.form-actions button:last-child {
+  border-color: var(--border-color);
+  background: transparent;
+  color: var(--muted-text);
+}
+
+.records-state,
+.records-empty,
+.records-message {
+  padding: 1rem 1.1rem;
+  border: 1px solid var(--border-color);
+  border-radius: 0.45rem;
+  background: var(--surface-muted);
+  color: var(--muted-text);
+  line-height: 1.55;
+}
+
+.records-error {
+  border-color: #e4c5c0;
+  background: #fbefec;
+  color: var(--danger);
+}
+
+@media (max-width: 42rem) {
+  .records-heading,
+  .record-list li {
+    align-items: flex-start;
+  }
+
+  .record-list li {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .record-list li > strong {
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  .record-list li .record-actions {
+    grid-column: 1 / -1;
+    justify-content: flex-start;
+    width: 100%;
+    border-top: 1px solid var(--border-color);
+    padding-top: 0.7rem;
+  }
+}
 @media (max-width: 36rem) { .record-list li { grid-template-columns: 1fr; } .record-actions button { flex: 1; } .records-heading > button { width: 100%; } }
 </style>

@@ -50,4 +50,18 @@ onMounted(() => { canOpenDataFolder.value = Boolean(bridge() && typeof bridge().
 .warning { color: #8a1c13; } .hint { color: #5d6675; font-size: .92rem; }
 button { min-height: 2.4rem; padding: .45rem .85rem; border: 1px solid #295ecb; border-radius: .45rem; background: #295ecb; color: white; cursor: pointer; }
 .error { padding: .65rem .8rem; border-radius: .45rem; background: #fff1f0; color: #8a1c13; }
+
+.settings-page { width: 100%; max-width: 48rem; gap: 1.75rem; }
+.settings-page > h2 { margin: 0; color: var(--text); font-size: clamp(1.9rem, 4vw, 3rem); font-weight: 650; letter-spacing: -.04em; line-height: 1.1; }
+.settings-page > p { margin: -.85rem 0 .65rem; color: var(--muted-text); line-height: 1.7; }
+.info-card { padding: 1.5rem; border-color: var(--border-color); border-radius: .55rem; background: var(--surface); }
+.info-card h3 { margin-bottom: 1rem; color: var(--text); font-size: 1.12rem; }
+.info-card ol { margin: 0; padding-left: 1.3rem; color: var(--muted-text); line-height: 1.7; }
+.info-card li { margin: .85rem 0; }
+.info-card code { color: var(--accent-hover); }
+.info-card .warning { margin-top: 1.3rem; color: var(--danger); line-height: 1.6; }
+.info-card button { min-height: 2.65rem; border-color: var(--accent); background: var(--accent); }
+.info-card button:hover:not(:disabled) { background: var(--accent-hover); }
+.info-card .hint { color: var(--muted-text); line-height: 1.5; }
+.settings-page .error { border: 1px solid #e4c5c0; background: #fbefec; color: var(--danger); }
 </style>

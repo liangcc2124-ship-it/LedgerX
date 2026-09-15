@@ -291,7 +291,6 @@ onUnmounted(() => {
 
 <template>
   <section class="profiles-page" aria-labelledby="profiles-page-title">
-    <p class="eyebrow">Profiles</p>
     <h2 id="profiles-page-title" tabindex="-1">用户空间</h2>
     <p class="page-intro">管理本地数据使用的用户空间。切换空间不会删除账本或备份。</p>
 
@@ -411,6 +410,33 @@ input[type='text'] { min-height: 2.5rem; border: 1px solid var(--border-color, #
 .loading-state, .error-state { padding: 1rem 0; }
 .load-more-wrap { text-align: center; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+
+.profiles-page { width: 100%; max-width: none; gap: 1.75rem; }
+.profiles-page > h2 { margin: 0 0 .55rem; color: var(--text); font-size: clamp(1.9rem, 4vw, 3rem); font-weight: 650; letter-spacing: -.04em; }
+.profiles-page > .page-intro { margin: -.75rem 0 .75rem; color: var(--muted-text); line-height: 1.6; }
+.create-profile, .profile-card { border-color: var(--border-color); border-radius: .55rem; background: var(--surface); }
+.create-profile { gap: .8rem; padding: 1.25rem; }
+.create-profile > label { color: var(--text); font-weight: 650; }
+.create-row { gap: .75rem; }
+.create-row input { min-height: 2.75rem; border-color: #cfc7bd; border-radius: .4rem; background: #fff; }
+.create-row button, .profiles-page .secondary-button, .profiles-page .danger-button, .profiles-page .error-state button { min-height: 2.65rem; padding: .6rem .9rem; border-radius: .45rem; }
+.create-row button { border-color: var(--accent); background: var(--accent); }
+.create-row button:hover:not(:disabled) { background: var(--accent-hover); }
+.profiles-page .secondary-button { border-color: var(--border-color); color: var(--muted-text); background: transparent; }
+.profiles-page .secondary-button:hover:not(:disabled) { border-color: #cdb9a4; background: var(--accent-soft); color: var(--accent-hover); }
+.profiles-page .danger-button { border-color: #c28b82; background: transparent; color: var(--danger); }
+.profiles-page .danger-button:hover:not(:disabled) { background: #fbefec; }
+.profiles-toolbar { padding: .4rem 0 .85rem; border-bottom: 1px solid var(--border-color); }
+.archive-filter { color: var(--muted-text); }
+.profile-list { gap: .7rem; }
+.profile-card { align-items: flex-start; gap: 1.25rem; padding: 1.2rem 1.25rem; }
+.profile-copy h3 { color: var(--text); font-size: 1.05rem; }
+.profile-meta { color: var(--muted-text); line-height: 1.5; }
+.active-mark { color: var(--success); }
+.operation-message { padding: 1rem 1.1rem; border: 1px solid var(--border-color); border-radius: .45rem; background: var(--surface-muted); color: var(--muted-text); line-height: 1.5; }
+.operation-error { border-color: #e4c5c0; background: #fbefec; color: var(--danger); }
+.operation-success { border-color: #c7ddd0; background: #eef6f0; color: var(--success); }
+@media (max-width: 36rem) { .create-row, .profile-card { flex-direction: column; } .create-row button, .profile-actions, .profile-actions > button { width: 100%; } .profile-actions { justify-content: stretch; } .archive-confirm { justify-content: stretch; } .archive-confirm > * { width: 100%; } }
 @media (max-width: 36rem) {
   .create-row, .profile-card { flex-direction: column; }
   .create-row button, .profile-actions, .profile-actions > button { width: 100%; }
