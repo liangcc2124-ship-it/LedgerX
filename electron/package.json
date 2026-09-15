@@ -1,0 +1,25 @@
+{
+  "name": "ledgerx-electron-shell",
+  "productName": "LedgerX",
+  "private": true,
+  "version": "0.1.0",
+  "description": "LedgerX secure Electron shell",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "test": "node scripts/run-tests.mjs",
+    "test:unit": "node --test tests/unit.test.mjs",
+    "test:e2e": "node node_modules/@playwright/test/cli.js test tests/electron.spec.mjs --reporter=line",
+    "test:integration": "node node_modules/@playwright/test/cli.js test tests/s0-006.integration.spec.mjs --reporter=line",
+    "prepare:package": "node scripts/prepare-package.mjs",
+    "package:win": "npm run prepare:package && electron-forge package --platform=win32 --arch=x64",
+    "make:win": "npm run prepare:package && electron-forge make --platform=win32 --arch=x64",
+    "smoke:package": "node scripts/package-smoke.mjs"
+  },
+  "devDependencies": {
+    "@electron-forge/cli": "6.4.2",
+    "@electron-forge/maker-squirrel": "6.4.2",
+    "@playwright/test": "1.63.0",
+    "electron": "44.3.0"
+  }
+}

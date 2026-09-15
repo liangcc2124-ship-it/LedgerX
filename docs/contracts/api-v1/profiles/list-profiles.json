@@ -1,0 +1,32 @@
+{
+  "data": {
+    "items": [
+      {
+        "id": "8ec4f7f6-4db8-4f44-9b7a-2e28ec8f7fd4",
+        "name": "默认空间",
+        "status": "ACTIVE",
+        "createdAt": "2026-09-12T08:30:00Z",
+        "lastOpenedAt": "2026-09-14T01:10:00Z",
+        "revision": 1
+      },
+      {
+        "id": "17b650e7-3d67-4a05-9ec5-68ddc50ab047",
+        "name": "备用空间",
+        "status": "INACTIVE",
+        "createdAt": "2026-09-13T02:00:00Z",
+        "lastOpenedAt": null,
+        "revision": 2
+      }
+    ],
+    "activeProfileId": "8ec4f7f6-4db8-4f44-9b7a-2e28ec8f7fd4",
+    "page": {
+      "nextCursor": null,
+      "hasMore": false,
+      "limit": 50
+    }
+  },
+  "meta": {
+    "dataRevision": 0,
+    "catalogRevision": 2
+  }
+}

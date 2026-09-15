@@ -1,0 +1,17 @@
+{
+  "data": {
+    "profile": {
+      "id": "17b65036-e5b1-4de9-b78d-068ae54ab047",
+      "name": "家庭账本",
+      "status": "ACTIVE",
+      "createdAt": "2026-09-13T02:00:00Z",
+      "lastOpenedAt": "2026-09-13T02:00:00Z",
+      "revision": 0
+    },
+    "previousActiveProfileId": "8ec4ec62-d0c6-4ad8-8329-dedccba59fd4"
+  },
+  "meta": {
+    "dataRevision": 0,
+    "catalogRevision": 1
+  }
+}

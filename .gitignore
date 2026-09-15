@@ -30,3 +30,18 @@ web/test-results/
 web/playwright-report/
 *.tsbuildinfo
 release-native-v3/
+release-native-v3.1/
+
+# Vue frontend
+frontend/node_modules/
+frontend/dist/
+frontend/test-results/
+frontend/playwright-report/
+
+# Electron shell
+electron/node_modules/
+electron/test-results/
+electron/playwright-report/
+electron/packaging/
+electron/out/
+electron/make/

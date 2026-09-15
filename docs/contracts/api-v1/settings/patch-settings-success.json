@@ -1,0 +1,17 @@
+{
+  "data": {
+    "notificationsEnabled": true,
+    "autoBackupEnabled": true,
+    "autoBackupIntervalDays": 7,
+    "autoBackupRetentionCount": 10,
+    "lastAutoBackupAt": null,
+    "lastSettingsSection": "GENERAL",
+    "currency": {"code": "CNY", "symbol": "¥"},
+    "safetyBuffer": {"amount": "3000.01", "currency": "CNY"},
+    "hideAllAmounts": true,
+    "themeName": "GRAPHITE",
+    "revision": 1,
+    "updatedAt": "2026-09-14T04:00:00Z"
+  },
+  "meta": {"dataRevision": 1}
+}

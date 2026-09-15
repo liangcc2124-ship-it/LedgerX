@@ -1,0 +1,2 @@
+package com.ledgerx.application.ledger;
+public final class RecordApiResult {private final int status;private final String responseJson,etag,location;public RecordApiResult(int s,String j,String e,String l){status=s;responseJson=j;etag=e;location=l;}public int getStatus(){return status;}public String getResponseJson(){return responseJson;}public String getEtag(){return etag;}public String getLocation(){return location;}}

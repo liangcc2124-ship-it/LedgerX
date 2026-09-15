@@ -1,0 +1,18 @@
+{
+  "data": {
+    "idempotencyKey": "2f5aedce-f6cb-4b8e-bfac-5ca95808e060",
+    "status": "COMPLETED",
+    "responseStatus": 201,
+    "result": {
+      "profile": {
+        "id": "17b65036-e5b1-4de9-b78d-068ae54ab047",
+        "status": "ACTIVE",
+        "revision": 0
+      }
+    }
+  },
+  "meta": {
+    "dataRevision": 0,
+    "catalogRevision": 1
+  }
+}

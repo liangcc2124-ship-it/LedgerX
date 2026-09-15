@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>LedgerX - 本地服务不可用</title>
+    <style>
+      :root { color-scheme: light; font-family: "Segoe UI", "Microsoft YaHei", sans-serif; }
+      body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #f7f8fa; color: #1f2937; }
+      main { width: min(92vw, 520px); box-sizing: border-box; padding: 32px; border: 1px solid #e5e7eb; border-radius: 16px; background: #fff; box-shadow: 0 12px 32px rgba(15, 23, 42, .08); }
+      h1 { margin: 0 0 12px; font-size: 1.4rem; }
+      p { line-height: 1.6; color: #4b5563; }
+      .actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 24px; }
+      button { min-height: 42px; padding: 0 16px; border-radius: 9px; border: 1px solid #cbd5e1; background: #fff; color: #1f2937; cursor: pointer; font: inherit; }
+      button.primary { border-color: #2563eb; background: #2563eb; color: #fff; }
+      button:focus-visible { outline: 3px solid #93c5fd; outline-offset: 2px; }
+      #feedback { min-height: 1.5em; margin-top: 16px; color: #1d4ed8; }
+    </style>
+  </head>
+  <body>
+    <main aria-labelledby="title">
+      <h1 id="title">本地服务暂时不可用</h1>
+      <p>LedgerX 无法完成本地后端连接。你的账本数据未在此页面中提交或修改。</p>
+      <div class="actions">
+        <button class="primary" id="retry" type="button">重试连接</button>
+        <button id="logs" type="button">打开日志目录</button>
+        <button id="data" type="button">打开数据目录</button>
+      </div>
+      <p id="feedback" role="status" aria-live="polite"></p>
+    </main>
+    <script>
+      const feedback = document.getElementById('feedback');
+      document.getElementById('retry').addEventListener('click', async () => {
+        feedback.textContent = '正在重试…';
+        const result = window.desktop ? await window.desktop.retryBackend() : null;
+        if (!result || !result.ok) feedback.textContent = '重试失败，请检查日志后再试。';
+      });
+      document.getElementById('logs').addEventListener('click', async () => {
+        const result = window.desktop ? await window.desktop.openLogsFolder() : null;
+        if (!result || !result.ok) feedback.textContent = '无法打开日志目录。';
+      });
+      document.getElementById('data').addEventListener('click', async () => {
+        const result = window.desktop ? await window.desktop.openDataFolder() : null;
+        if (!result || !result.ok) feedback.textContent = '无法打开数据目录。';
+      });
+    </script>
+  </body>
+</html>

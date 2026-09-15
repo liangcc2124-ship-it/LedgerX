@@ -1,3 +1,29 @@
+# Unreleased — Java 11 前后端分离设计修订
+
+- 目标前端从 React/TypeScript + JavaFX WebView 规划改为 Vue 3 + HTML/CSS/JavaScript + Electron。
+- Java 11 后端改为只绑定本机的版本化 REST API，Vue 与 Java 可独立开发、构建和测试。
+- Electron 仅负责安全桌面壳、会话认证注入和 Java 子进程生命周期；SQLite 仍由 Java 单写者管理。
+- 废止 JavaFX、进程内 Desktop Bridge 和旧 M0 任务，新增 S0 实施顺序与真实 Electron→REST→Java→SQLite 验收。
+- 明确两级启动语义：stdout readiness 只表示随机端口已监听，应用是否可用必须由已认证 system status 判断。
+- 已形成 S0-001..006 Java/Vue/Electron/SQLite 实现及隔离 Electron→REST→Java→SQLite 证据；2026-09-13 审查发现默认启动未传递数据根、`STARTING` 被误显示为已连接及 Vite 代理 token 外送风险。BUG-001/BUG-002/BUG-003 已修复，BUG-004 已在用户授权的 Node 24.19.0 环境完成默认启动和真实链路重验；后续继续使用该本机环境。
+- P1-001 已完成 catalog V001→V002 有序迁移、catalog revision/幂等表和 ledger schemaVersion 投影修正；P1-002 已实现 profiles catalog REST：列出、创建即切换、切换、归档、恢复只读列表、分页、乐观并发、跨作用域持久幂等与 operation 查询。P1-003 已实现 ledger V002 settings：每个 active profile 的读取/保存、金额分换算、强 ETag、同事务 data revision、跨重启幂等回放和真实 SQLite/HTTP 验证。READY status 如实声明 `profiles.read`/`profiles.write` 与 `settings.read`/`settings.write`；Vue 页面尚未接入，P1-003 不执行备份、通知或 CSS 文件操作。最终 Java 回归数量与工具链诊断见 P1-003 验证记录。
+- 指标数据的 0..n 多目标历史映射已由 ADR-008 定案为 `direct_metric_entry` + `direct_metric_assignment`，不复制事实、不选择主指标且保留零目标数据。
+- 已按 ADR-010 将 Java 重构的首个可用版本收敛为个人基础记账：分类、账户、收入、固定支出、弹性支出、余额、编辑和回收站。资产/分摊、指标/公式、报表/预警、旧 JSON 导入和应用内备份恢复延后，不再阻塞基础版本。
+- 新增 P3 分类/账户与 P4 基础记录的严格任务顺序和 P4-001..005 Task Spec；当前下一任务为 P3-001。开发和验收直接使用本机 Node 24.19.0，不再要求 Node 22 复测。
+- 基础版不新增金融安全/合规能力；保留已经实现的 loopback、会话令牌和 Electron 隔离。个人分享使用 Forge 6.4.2 的已知审计风险按 ADR-006 披露，但不作为基础功能门禁。
+- 本节不表示正式安装包、签名或财务领域迁移已发布；当前 v3.1 WPF/React 发布入口保持不变。
+
+# v3.1.0 — 基础功能迭代
+
+- 标准分类库改为全局可用的系统层级分类，同时保留历史自定义分类与用户新增分类。
+- 周期成本自动推导服务结束日；弹窗锁定背景滚动并改善窄屏日期、按钮和卡片布局。
+- 总览卡片支持鼠标移动/缩放；固定资产统一显示原值、累计折旧和账面价值。
+- 归集指标改为可选，数值记录可独立保存；结构化公式可引用自定义指标和期间时间变量。
+- 修复新增指标必须重启才显示的问题，并保证指标、公式和总览布局同步持久化。
+- 修复自定义指标按创建顺序单次计算导致的依赖失效；新增归集记录时间变量和可读公式说明。
+- 摊销模板改为按服务期间自动引用已确认固定成本；旧模板数据幂等升级。固定资产处置增加取消确认和撤销。
+- schemaVersion 升级到 4，迁移旧指标归集字段；新增分类、固定资产账面值和公式数据链路回归测试。
+
 ## v3.0.0 — 财务事实与可配置规则
 
 - 引入本地用户空间、分类库与资金账户；每个空间独立保存账本和布局。

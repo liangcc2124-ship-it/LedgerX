@@ -1,0 +1,255 @@
+:root {
+  color: #24313a;
+  background: #f4f7f8;
+  font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  min-width: 320px;
+  min-height: 100vh;
+  margin: 0;
+  background: linear-gradient(145deg, #f8fafb, #eaf1f2);
+}
+
+button,
+body {
+  font: inherit;
+}
+
+button {
+  min-height: 2.75rem;
+  border: 0;
+  border-radius: 0.75rem;
+  padding: 0.7rem 1rem;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+button:focus-visible {
+  outline: 3px solid #196a78;
+  outline-offset: 3px;
+}
+
+button:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
+.page-shell {
+  display: grid;
+  min-height: 100vh;
+  place-items: center;
+  padding: 1rem;
+}
+
+.status-card {
+  width: min(100%, 32rem);
+  min-width: 0;
+  padding: clamp(1.25rem, 5vw, 2.5rem);
+  border: 1px solid #d4e1e3;
+  border-radius: 1.25rem;
+  background: rgba(255, 255, 255, 0.95);
+  box-shadow: 0 1.25rem 3rem rgba(38, 67, 73, 0.12);
+}
+
+.eyebrow {
+  margin: 0 0 0.5rem;
+  color: #196a78;
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+h1 {
+  margin: 0;
+  color: #14252b;
+  font-size: clamp(1.6rem, 7vw, 2.25rem);
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+
+.status-panel {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  min-width: 0;
+  margin-top: 2rem;
+  padding: 1rem;
+  border-radius: 0.9rem;
+  background: #f1f7f7;
+}
+
+.status-panel > p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.status-dot {
+  flex: 0 0 auto;
+  width: 0.75rem;
+  height: 0.75rem;
+  margin-top: 0.3rem;
+  border-radius: 50%;
+  background: #8a9ca1;
+}
+
+.status-dot.is-loading {
+  background: #c47b29;
+  box-shadow: 0 0 0 0.25rem rgba(196, 123, 41, 0.12);
+}
+
+.status-dot.is-ready {
+  background: #16815e;
+  box-shadow: 0 0 0 0.25rem rgba(22, 129, 94, 0.12);
+}
+
+.status-dot.is-error {
+  background: #bd4b42;
+  box-shadow: 0 0 0 0.25rem rgba(189, 75, 66, 0.12);
+}
+
+.status-copy {
+  min-width: 0;
+}
+
+.status-title,
+.status-detail {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.status-title {
+  color: #18383f;
+  font-weight: 700;
+}
+
+.status-detail {
+  margin-top: 0.35rem;
+  color: #52666b;
+  line-height: 1.5;
+}
+
+.retry-button {
+  width: 100%;
+  margin-top: 1.25rem;
+  color: #fff;
+  background: #196a78;
+}
+
+.recovery-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-top: 1.25rem;
+}
+
+.recovery-actions .retry-button,
+.recovery-actions .secondary-button {
+  width: auto;
+  margin-top: 0;
+}
+
+.secondary-button {
+  color: #24474e;
+  border: 1px solid #a9c4c8;
+  background: #edf6f6;
+}
+
+.secondary-button:hover {
+  background: #e2f0f1;
+}
+
+.action-feedback {
+  margin: 0.9rem 0 0;
+  color: #8e3f39;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.main-navigation {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 1.25rem;
+  padding: 0.35rem;
+  border: 1px solid #d4e1e3;
+  border-radius: 0.9rem;
+  background: #f7fbfb;
+}
+
+.nav-button {
+  flex: 1 1 7rem;
+  min-width: 0;
+  color: #24474e;
+  background: transparent;
+  white-space: nowrap;
+}
+
+.nav-button:hover,
+.nav-button.is-selected {
+  color: #fff;
+  background: #196a78;
+}
+
+.home-panel,
+.placeholder-panel {
+  min-width: 0;
+  margin-top: 1.25rem;
+  padding: 1rem;
+  border: 1px solid #d4e1e3;
+  border-radius: 0.9rem;
+  background: #fbfdfd;
+}
+
+.home-panel h2,
+.placeholder-panel h2 {
+  margin: 0;
+  color: #18383f;
+  font-size: 1.25rem;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+
+.home-panel p,
+.placeholder-panel p:last-child {
+  margin: 0.65rem 0 0;
+  color: #52666b;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+h1:focus-visible,
+h2:focus-visible {
+  outline: 3px solid #196a78;
+  outline-offset: 4px;
+}
+
+.retry-button:hover:not(:disabled) {
+  background: #145663;
+}
+
+@media (min-width: 600px) {
+  .page-shell {
+    padding: 2rem;
+  }
+
+  .retry-button {
+    width: auto;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
+}

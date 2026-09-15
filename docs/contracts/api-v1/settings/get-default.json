@@ -1,0 +1,17 @@
+{
+  "data": {
+    "notificationsEnabled": false,
+    "autoBackupEnabled": true,
+    "autoBackupIntervalDays": 7,
+    "autoBackupRetentionCount": 10,
+    "lastAutoBackupAt": null,
+    "lastSettingsSection": "GENERAL",
+    "currency": {"code": "CNY", "symbol": "¥"},
+    "safetyBuffer": {"amount": "3000.00", "currency": "CNY"},
+    "hideAllAmounts": false,
+    "themeName": "WARM_COPPER",
+    "revision": 0,
+    "updatedAt": "2026-09-14T04:00:00Z"
+  },
+  "meta": {"dataRevision": 0}
+}

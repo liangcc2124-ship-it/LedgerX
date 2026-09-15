@@ -1,0 +1,14 @@
+{
+  "data": {
+    "apiVersion": "1.0",
+    "applicationVersion": "0.1.0-SNAPSHOT",
+    "schemaVersion": null,
+    "backupFormatVersion": 3,
+    "activeProfileId": null,
+    "state": "RECOVERY_REQUIRED",
+    "capabilities": ["system.status"]
+  },
+  "meta": {
+    "dataRevision": null
+  }
+}
