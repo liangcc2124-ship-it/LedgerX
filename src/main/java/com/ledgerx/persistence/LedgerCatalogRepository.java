@@ -151,7 +151,7 @@ public final class LedgerCatalogRepository {
     }
 
     public String earliestSettlement(Connection c,String accountId) throws SQLException {
-        try(PreparedStatement s=c.prepareStatement("SELECT MIN(settlement_on) FROM finance_record WHERE account_id=? AND deleted_at IS NULL AND settlement_mode='PAID_FROM_ACCOUNT'")){s.setString(1,accountId);try(ResultSet r=s.executeQuery()){return r.next()?r.getString(1):null;}}
+        try(PreparedStatement s=c.prepareStatement("SELECT MIN(settlement_on) FROM finance_record WHERE account_id=? AND settlement_mode='PAID_FROM_ACCOUNT'")){s.setString(1,accountId);try(ResultSet r=s.executeQuery()){return r.next()?r.getString(1):null;}}
     }
 
     public List<RecordRecord> listRecords(Connection c, String status) throws SQLException {

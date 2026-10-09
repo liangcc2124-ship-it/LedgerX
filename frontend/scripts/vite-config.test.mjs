@@ -3,8 +3,6 @@ import { EventEmitter } from 'node:events';
 import test from 'node:test';
 import { createDevProxy } from '../vite.config.js';
 
-const validToken = 'A'.repeat(43);
-
 class FakeProxyServer extends EventEmitter {}
 
 class FakeProxyRequest {
@@ -37,11 +35,8 @@ function assertConfigurationError(action, forbiddenText = '') {
   });
 }
 
-test('valid loopback origin creates only /api/v1 proxy and injects exact headers', () => {
-  const proxy = createDevProxy({
-    LEDGERX_DEV_API_ORIGIN: 'http://127.0.0.1:49152/',
-    LEDGERX_DEV_API_TOKEN: validToken,
-  });
+test('valid loopback origin creates an API proxy that preserves browser-session auth', () => {
+  const proxy = createDevProxy({ LEDGERX_DEV_API_ORIGIN: 'http://127.0.0.1:49152/' });
 
   assert.deepEqual(Object.keys(proxy), ['/api/v1']);
   assert.equal(proxy['/api/v1'].target, 'http://127.0.0.1:49152');
@@ -52,7 +47,7 @@ test('valid loopback origin creates only /api/v1 proxy and injects exact headers
   const request = new FakeProxyRequest();
   server.emit('proxyReq', request);
 
-  assert.equal(request.getHeader('Authorization'), `Bearer ${validToken}`);
+  assert.equal(request.getHeader('Authorization'), undefined);
   assert.equal(request.getHeader('Origin'), 'http://127.0.0.1:49152');
 });
 
@@ -67,30 +62,16 @@ test('valid loopback origin without token does not write Authorization', () => {
   assert.equal(request.getHeader('Origin'), 'http://127.0.0.1:8080');
 });
 
-test('both variables empty disable the development proxy', () => {
+test('an empty origin disables the development proxy', () => {
   assert.deepEqual(createDevProxy({}), {});
-  assert.deepEqual(
-    createDevProxy({ LEDGERX_DEV_API_ORIGIN: '', LEDGERX_DEV_API_TOKEN: '' }),
-    {},
-  );
+  assert.deepEqual(createDevProxy({ LEDGERX_DEV_API_ORIGIN: '' }), {});
 });
 
-test('token without an origin fails before creating a proxy without exposing the token', () => {
-  const secret = `secret-${validToken}`;
+test('legacy Bearer proxy configuration fails without exposing its value', () => {
+  const secret = 'legacy-secret-value';
   assertConfigurationError(
-    () => createDevProxy({ LEDGERX_DEV_API_TOKEN: secret }),
+    () => createDevProxy({ LEDGERX_DEV_API_ORIGIN: 'http://127.0.0.1:49152', LEDGERX_DEV_API_TOKEN: secret }),
     secret,
-  );
-});
-
-test('invalid token fails without exposing its value', () => {
-  const invalidToken = 'not-a-token';
-  assertConfigurationError(
-    () => createDevProxy({
-      LEDGERX_DEV_API_ORIGIN: 'http://127.0.0.1:49152',
-      LEDGERX_DEV_API_TOKEN: invalidToken,
-    }),
-    invalidToken,
   );
 });
 
@@ -115,8 +96,7 @@ test('only exact IPv4 loopback origins with valid ports are accepted', () => {
 
   for (const origin of invalidOrigins) {
     assertConfigurationError(
-      () => createDevProxy({ LEDGERX_DEV_API_ORIGIN: origin, LEDGERX_DEV_API_TOKEN: validToken }),
-      validToken,
+      () => createDevProxy({ LEDGERX_DEV_API_ORIGIN: origin }),
     );
   }
 });
@@ -125,9 +105,6 @@ test('production mode does not inspect or create a development proxy', () => {
   const env = {
     get LEDGERX_DEV_API_ORIGIN() {
       throw new Error('production must not read development origin');
-    },
-    get LEDGERX_DEV_API_TOKEN() {
-      throw new Error('production must not read development token');
     },
   };
 

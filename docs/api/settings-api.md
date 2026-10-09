@@ -34,11 +34,11 @@
 
 ## 2. Read — `GET /api/v1/settings`
 
-认证：桌面会话；范围：当前 active profile。无 query、无 body、无副作用。成功 `200` 返回上方 DTO、`ETag:"<revision>"`。没有 active profile 或恢复状态不使用默认值伪装，返回 `423 RECOVERY_REQUIRED`。
+认证：本机浏览器会话；范围：当前 active profile。无 query、无 body、无副作用。成功 `200` 返回上方 DTO、`ETag:"<revision>"`。没有 active profile 或恢复状态不使用默认值伪装，返回 `423 RECOVERY_REQUIRED`。
 
 ## 3. Update — `PATCH /api/v1/settings`
 
-Headers：`Authorization`、`X-Request-Id`、`Idempotency-Key`、`If-Match` 必填。`If-Match` 是当前 settings `revision` 的强 ETag。Body 是至少一个字段的 JSON object；`null` 不表示清空。未知普通字段按全局规则忽略，但不能使空的有效 patch 成功。
+Headers：浏览器会话、`X-LedgerX-CSRF`、`X-Request-Id`、`Idempotency-Key`、`If-Match` 必填。`If-Match` 是当前 settings `revision` 的强 ETag。Body 是至少一个字段的 JSON object；`null` 不表示清空。未知普通字段按全局规则忽略，但不能使空的有效 patch 成功。
 
 | 可写字段 | 类型/校验 | 默认/映射 |
 | --- | --- | --- |

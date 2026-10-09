@@ -26,11 +26,11 @@
 | --- | --- |
 | 入口 | `/api/v1/categories`、`/accounts`、`/records` 及 `/records/{id}/restore`。 |
 | 输出 | 分类/账户投影、分页记录投影、实体 ETag/revision、`dataRevision`。 |
-| 依赖方 | Vue 分类账户页、Vue 收支记录页、真实桌面集成验收。 |
+| 依赖方 | Vue 分类账户页、Vue 收支记录页、真实系统浏览器集成验收。 |
 | 被依赖方 | active profile/application 写门、SQLite transaction/repository、后端 `Clock`。 |
 | 依赖方向 | `Vue → HTTP → application → domain`；persistence 实现 application 端口。UI 不复制余额规则，repository 不决定 HTTP 状态。 |
 
-当前 Windows 桌面会话是唯一主体，没有角色和数据权限矩阵。所有业务请求隐含 active profile，请求不得携带 `profileId`。恢复模式下 mutation 按全局 API 拒绝。
+当前 Java 本机服务为单用户提供浏览器同源会话，没有角色和数据权限矩阵。所有业务请求隐含 active profile，请求不得携带 `profileId`。恢复模式下 mutation 按全局 API 拒绝。
 
 ## 3. 实体、字段、规则、不变量与权限
 
@@ -110,11 +110,10 @@ NEW ──create──> ACTIVE ──trash──> TRASHED ──restore──> A
 | 重复提交/并发冲突 | 同 key 同 body 只写一次；stale ETag 零覆盖。 | SQLite + HTTP |
 | 空数据/20,000 条 | 空态正常；分页顺序稳定，常用读取达到需求门槛。 | HTTP + 性能抽查 |
 
-前端合同测试必须断言实际 method/path/body/header、错误反馈和最终页面状态；P4 最终验收必须使用真实 Electron→Vue→REST→Java→SQLite，并完整重启验证持久化。
+前端合同测试必须断言实际 method/path/body/header、错误反馈和最终页面状态；当前 P4 最终验收必须使用真实系统浏览器→Vue→REST→Java→SQLite，并在 Java 服务完整重启后验证持久化，见 [P7 路线图](../tasks/README.md)。
 
 ## 8. 冲突、待决与升级条件
 
 [ADR-010](../decisions/ADR-010-basic-ledger-scope.md) 已解除 G-002/G-003：基础记录不包含资产/分摊或指标字段，也不依赖对应 API。G-004/G-005 降级为后续可选工作，不是基础版卡点。
 
 基础版没有业务待决项。若实现需要新增 recordType/settlementMode、改变数据库表、加入高级关联、永久删除、文件恢复、角色/加密/审计或改变全局 API 语义，必须停止并升级；低级实现模型不得自行扩展。
-

@@ -1,5 +1,7 @@
 # LedgerX v2.1 迭代建议
 
+> **历史建议**：不得用本文中的 WPF/WebView/React 或接口描述指导新重构。目标架构见 [architecture.md](./architecture.md)，当前任务见 [tasks/README.md](./tasks/README.md)。
+
 > 状态：已由 LedgerX-v2.1-正式迭代需求文档.md 取代；后续开发以正式文档为准。
 
 - 建议版本：v2.1.0

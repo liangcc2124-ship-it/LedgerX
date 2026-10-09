@@ -1,6 +1,6 @@
 # ADR-004：Vue/Electron + 本机 REST 的前后端分离
 
-- 状态：已接受（Forge 版本约束由 [ADR-006](./ADR-006-electron-forge-6-4-2-audit.md) 部分取代）
+- 状态：Electron 桌面壳部分已由 [ADR-014](./ADR-014-local-browser-only.md) 取代；Vue/Java 本机 REST 分离仍保留
 - 日期：2026-09-12
 - 替代：[ADR-002](./ADR-002-preserve-react-with-javafx-webview.md)
 

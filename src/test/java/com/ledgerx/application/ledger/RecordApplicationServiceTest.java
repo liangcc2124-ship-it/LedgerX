@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ledgerx.application.profile.ProfileApplicationService;
 import com.ledgerx.persistence.LedgerCatalogRepository;
 import com.ledgerx.persistence.SqliteDatabase;
+import static com.ledgerx.testsupport.LedgerTestSupport.openReadyLedger;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -31,7 +32,7 @@ class RecordApplicationServiceTest {
 
     @Test
     void createReplaceTrashRestoreReopenAndBalanceUseRealSqlite(@TempDir Path temp) throws Exception {
-        ProfileApplicationService service = ProfileApplicationService.open(temp, "test", CLOCK);
+        ProfileApplicationService service = openReadyLedger(temp, "test", CLOCK);
         service.createCategory(new CategoryPatch(CATEGORY, "测试收入", null), categoryMutation("01"));
         RecordApiResult created = service.createRecord(new RecordPatch(RECORD, RecordType.INCOME, 10000,
                 LocalDate.of(2026, 9, 10), CATEGORY, ACCOUNT, LocalDate.of(2026, 9, 14), "工资"),
@@ -56,7 +57,7 @@ class RecordApplicationServiceTest {
         assertEquals("ACTIVE", record(restored).at("/data/record/status").asText());
         assertEquals("-30.00", accountBalance(service));
 
-        ProfileApplicationService reopened = ProfileApplicationService.open(temp, "test", CLOCK);
+        ProfileApplicationService reopened = openReadyLedger(temp, "test", CLOCK);
         assertEquals("ACTIVE", record(reopened.getRecord(RECORD)).at("/data/record/status").asText());
         assertEquals("-30.00", accountBalance(reopened));
         assertEquals(1, record(reopened.listRecords("ACTIVE", 50, null)).at("/data/items").size());
@@ -75,14 +76,14 @@ class RecordApplicationServiceTest {
             try (java.sql.Statement statement = connection.createStatement();
                  java.sql.ResultSet rows = statement.executeQuery("SELECT COUNT(*) FROM processed_operation")) {
                 assertTrue(rows.next());
-                assertEquals(5, rows.getInt(1));
+                assertEquals(6, rows.getInt(1));
             }
         }
     }
 
     @Test
     void invalidReferenceAndStaleRevisionDoNotWrite(@TempDir Path temp) throws Exception {
-        ProfileApplicationService service = ProfileApplicationService.open(temp, "test", CLOCK);
+        ProfileApplicationService service = openReadyLedger(temp, "test", CLOCK);
         service.createCategory(new CategoryPatch(CATEGORY, "测试支出", null), categoryMutation("11"));
         RecordPatch patch = new RecordPatch(RECORD, RecordType.VARIABLE_COST, 1, LocalDate.of(2026, 9, 10),
                 CATEGORY, ACCOUNT, LocalDate.of(2026, 9, 10), "");
@@ -100,14 +101,14 @@ class RecordApplicationServiceTest {
 
     @Test
     void customCategoryIsExposedAsUsableForRecords(@TempDir Path temp) throws Exception {
-        ProfileApplicationService service = ProfileApplicationService.open(temp, "test", CLOCK);
+        ProfileApplicationService service = openReadyLedger(temp, "test", CLOCK);
         CategoryApiResult result = service.createCategory(new CategoryPatch(CATEGORY, "自定义可用分类", null), categoryMutation("31"));
         assertTrue(result.getResponseJson().contains("\"canUseForRecords\":true"));
     }
 
     @Test
     void mergeMovesActiveRecordsAndArchivesSourceAtomically(@TempDir Path temp) throws Exception {
-        ProfileApplicationService service = ProfileApplicationService.open(temp, "test", CLOCK);
+        ProfileApplicationService service = openReadyLedger(temp, "test", CLOCK);
         service.createCategory(new CategoryPatch(CATEGORY, "来源分类", null), categoryMutation("41"));
         service.createCategory(new CategoryPatch(TARGET_CATEGORY, "目标分类", null), categoryMutation("42"));
         assertTrue(JSON.readTree(service.listCategories(true, 200, null).getResponseJson()).toString().contains(CATEGORY));
@@ -131,14 +132,14 @@ class RecordApplicationServiceTest {
         assertTrue(sourceArchived);
         assertEquals(TARGET_CATEGORY, JSON.readTree(service.getRecord(RECORD).getResponseJson())
                 .at("/data/record/category/id").asText());
-        ProfileApplicationService reopened = ProfileApplicationService.open(temp, "test", CLOCK);
+        ProfileApplicationService reopened = openReadyLedger(temp, "test", CLOCK);
         assertEquals(TARGET_CATEGORY, JSON.readTree(reopened.getRecord(RECORD).getResponseJson())
                 .at("/data/record/category/id").asText());
     }
 
     @Test
     void assetAndLiabilityBalancesFollowRecordDirection(@TempDir Path temp) throws Exception {
-        ProfileApplicationService service = ProfileApplicationService.open(temp, "test", CLOCK);
+        ProfileApplicationService service = openReadyLedger(temp, "test", CLOCK);
         service.createCategory(new CategoryPatch(CATEGORY, "方向分类", null), categoryMutation("51"));
         service.createAccount(new AccountPatch(LIABILITY, "信用账户", "CREDIT",
                 LocalDate.of(2026, 1, 1), 0, false), accountMutation("52"));
@@ -154,7 +155,7 @@ class RecordApplicationServiceTest {
 
     @Test
     void repositoryInsertUsesSchemaDefaults(@TempDir Path temp) throws Exception {
-        ProfileApplicationService service = ProfileApplicationService.open(temp, "test", CLOCK);
+        ProfileApplicationService service = openReadyLedger(temp, "test", CLOCK);
         service.createCategory(new CategoryPatch(CATEGORY, "直接写入测试", null), categoryMutation("21"));
         Path ledger = temp.resolve("Profiles").resolve(service.current().getActiveProfileId()).resolve("ledger.db");
         LedgerCatalogRepository repo = new LedgerCatalogRepository(ledger);

@@ -21,13 +21,12 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
-import java.util.Base64;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static com.ledgerx.testsupport.LedgerTestSupport.openReadyLedger;
 
 class CatalogHttpServerTest {
-    private static final String TOKEN = Base64.getUrlEncoder().withoutPadding().encodeToString(new byte[32]);
     private static final String CATEGORY = "c5b7e8f1-3c2d-4e5f-8a9b-0c1d2e3f4a5b";
     private static final String TARGET_CATEGORY = "c6b7e8f1-3c2d-4e5f-8a9b-0c1d2e3f4a5b";
     private static final String ARCHIVE_CATEGORY = "c7b7e8f1-3c2d-4e5f-8a9b-0c1d2e3f4a5b";
@@ -36,6 +35,7 @@ class CatalogHttpServerTest {
     private static final HttpClient CLIENT = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(2)).build();
     private static final Clock CLOCK = Clock.fixed(Instant.parse("2026-09-14T00:00:00Z"), ZoneOffset.UTC);
     private LedgerHttpServer server;
+    private BrowserTestSession session;
 
     @AfterEach
     void stop() { if (server != null) server.stop(Duration.ofSeconds(2)); }
@@ -44,8 +44,8 @@ class CatalogHttpServerTest {
     void catalogHttpLifecycleUsesRealApplicationAndOptimisticHeaders(@TempDir Path temp) throws Exception {
         Path web = temp.resolve("web"); Files.createDirectories(web);
         Files.writeString(web.resolve("index.html"), "ok", StandardCharsets.UTF_8);
-        ProfileApplicationService service = ProfileApplicationService.open(temp.resolve("data"), "test", CLOCK);
-        server = new LedgerHttpServer(TOKEN, new InetSocketAddress("127.0.0.1", 0),
+        ProfileApplicationService service = openReadyLedger(temp.resolve("data"), "test", CLOCK);
+        server = new LedgerHttpServer(new InetSocketAddress("127.0.0.1", 0),
                 StaticResourceManifest.fromDirectory(web), service, service, service, service, service, service,
                 new PrintStream(new ByteArrayOutputStream()), 2, 2);
         server.start();
@@ -108,9 +108,9 @@ class CatalogHttpServerTest {
 
     private HttpResponse<String> send(String method, String path, String body, String key, String expectedRevision) throws Exception {
         HttpRequest.Builder builder = HttpRequest.newBuilder(URI.create(server.origin() + path))
-                .header("Authorization", "Bearer " + TOKEN)
-                .header("X-Request-Id", "00000000-0000-4000-8000-000000000201")
-                .header("Origin", server.origin());
+                .header("X-Request-Id", "00000000-0000-4000-8000-000000000201");
+        if (session == null) session = new BrowserTestSession(server.origin());
+        session.apply(builder);
         if (key != null) builder.header("Idempotency-Key", key);
         if (expectedRevision != null) builder.header("If-Match", "\"" + expectedRevision + "\"");
         if (body == null) builder.method(method, HttpRequest.BodyPublishers.noBody());

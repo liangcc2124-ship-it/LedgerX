@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test } from './test-fixture.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -71,6 +71,7 @@ test('loads profiles and creates a trimmed profile with UUID and idempotency key
   await page.getByRole('button', { name: '用户空间' }).click();
   await expect(page.getByText(defaultProfile.name)).toBeVisible();
 
+  await page.getByRole('button', { name: '添加空间' }).click();
   await page.getByLabel('新建用户空间').fill('  家庭账本  ');
   await page.getByRole('button', { name: '创建' }).click();
   await expect(page.getByText('创建用户空间成功。')).toBeVisible();
@@ -114,7 +115,7 @@ test('activates only an inactive profile with its revision and empty object body
   await expect(page.getByRole('listitem').filter({ hasText: inactiveProfile.name }).getByText('当前空间')).toBeVisible();
 });
 
-test('requires inline archive confirmation and sends no request for first click or cancel', async ({ page }) => {
+test('requires archive dialog confirmation and sends no request for first click or cancel', async ({ page }) => {
   await openProfiles(page);
   let deleteCount = 0;
   let currentList = clone(listFixture);
@@ -152,6 +153,7 @@ test('shows name field errors without announcing false success', async ({ page }
       body: JSON.stringify({ error: { code: 'VALIDATION_ERROR', message: '请求无效。', fieldErrors: { name: '名称已存在。' } } }),
     });
   });
+  await page.getByRole('button', { name: '添加空间' }).click();
   await page.getByLabel('新建用户空间').fill('重复空间');
   await page.getByRole('button', { name: '创建' }).click();
   await expect(page.getByText('名称已存在。')).toBeVisible();
@@ -167,6 +169,7 @@ test('validates trimmed Unicode name length locally before sending a mutation', 
     postCount += 1;
     await route.fallback();
   });
+  await page.getByRole('button', { name: '添加空间' }).click();
   await page.getByLabel('新建用户空间').fill('a'.repeat(101));
   await page.getByRole('button', { name: '创建' }).click();
   await expect(page.getByText('用户空间名称不能超过 100 个字符。')).toBeVisible();
@@ -179,6 +182,7 @@ test('maps authentication and recovery errors without performing a write after r
     if (route.request().method() !== 'POST') return route.fallback();
     await route.fulfill({ status: 401, contentType: 'application/json', body: JSON.stringify({ error: { code: 'AUTHENTICATION_REQUIRED', message: '需要重新启动。' } }) });
   });
+  await page.getByRole('button', { name: '添加空间' }).click();
   await page.getByLabel('新建用户空间').fill('认证失败空间');
   await page.getByRole('button', { name: '创建' }).click();
   await expect(page.getByText('登录状态已失效，请重新启动应用。')).toBeVisible();
@@ -276,6 +280,7 @@ test('keeps timed-out operation pending and can query a completed result', async
     expect(route.request().url()).toContain(`/api/v1/operations/${operationKey}`);
     await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ data: { status: 'COMPLETED' }, meta: {} }) });
   });
+  await page.getByRole('button', { name: '添加空间' }).click();
   await page.getByLabel('新建用户空间').fill('待确认空间');
   await page.getByRole('button', { name: '创建' }).click();
   await expect(page.getByText('稍后重试。')).toBeVisible();
@@ -295,6 +300,7 @@ test('does not treat a missing operation record as a failed mutation', async ({ 
     expect(route.request().url()).toContain(`/api/v1/operations/${operationKey}`);
     await route.fulfill({ status: 404, contentType: 'application/json', body: JSON.stringify({ error: { code: 'NOT_FOUND', message: '没有找到。' } }) });
   });
+  await page.getByRole('button', { name: '添加空间' }).click();
   await page.getByLabel('新建用户空间').fill('未找到操作空间');
   await page.getByRole('button', { name: '创建' }).click();
   await expect(page.getByRole('button', { name: '查询结果' })).toBeVisible();
@@ -313,6 +319,7 @@ test('stays usable at 320px and 200% scale with keyboard focus', async ({ page }
   const cdp = await page.context().newCDPSession(page);
   await cdp.send('Emulation.setPageScaleFactor', { pageScaleFactor: 2 });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBeTruthy();
+  await page.getByRole('button', { name: '添加空间' }).click();
   await page.getByLabel('新建用户空间').focus();
   await expect(page.getByLabel('新建用户空间')).toBeFocused();
 });

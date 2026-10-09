@@ -10,8 +10,8 @@
     "safetyBuffer": {"amount": "3000.01", "currency": "CNY"},
     "hideAllAmounts": true,
     "themeName": "GRAPHITE",
-    "revision": 1,
+    "revision": 2,
     "updatedAt": "2026-09-14T04:00:00Z"
   },
-  "meta": {"dataRevision": 1}
+  "meta": {"dataRevision": 2}
 }

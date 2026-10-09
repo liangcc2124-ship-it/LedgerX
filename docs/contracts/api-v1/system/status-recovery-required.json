@@ -6,6 +6,8 @@
     "backupFormatVersion": 3,
     "activeProfileId": null,
     "state": "RECOVERY_REQUIRED",
+    "setupState": null,
+    "ledgerStartOn": null,
     "capabilities": ["system.status"]
   },
   "meta": {

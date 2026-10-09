@@ -28,7 +28,7 @@ class CoreCatalogSeedTest {
     void freshSeedHasContractCountsAndReopenDoesNotDuplicate(@TempDir Path temp) throws Exception {
         BootstrapSnapshot first = new ProfileBootstrap(temp, CLOCK).open();
         Path ledger = temp.resolve("Profiles").resolve(first.getProfileId()).resolve("ledger.db");
-        assertEquals(4, first.getSchemaVersion());
+        assertEquals(6, first.getSchemaVersion());
         assertSeedCounts(ledger);
         String openingOn;
         String accountCreatedAt;
@@ -100,13 +100,13 @@ class CoreCatalogSeedTest {
             }
         }
 
-        assertEquals(4, new LedgerBootstrap(CLOCK).open(ledger, profileId).getSchemaVersion());
+        assertEquals(6, new LedgerBootstrap(CLOCK).open(ledger, profileId).getSchemaVersion());
         assertSeedCounts(ledger);
     }
 
     private static void assertSeedCounts(Path ledger) throws Exception {
         try (Connection connection = new SqliteDatabase(ledger).open()) {
-            assertEquals(4, countRows(connection, "schema_history"));
+            assertEquals(6, countRows(connection, "schema_history"));
             assertEquals(71, countRows(connection, "category"));
             assertEquals(65, countRows(connection, "category_record_type"));
             assertEquals(1, countRows(connection, "financial_account"));

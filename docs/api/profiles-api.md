@@ -27,7 +27,7 @@
 
 ## 2. List profiles — `GET /api/v1/profiles`
 
-用途：空间切换器和设置页读取 catalog。认证：桌面会话。数据范围：整个本机 catalog，这是普通业务 API 不隐含 active profile 的明确例外。
+用途：空间切换器和设置页读取 catalog。认证：本机浏览器会话，认证与 Host/Origin 规则遵循[全局 API](../api.md)。数据范围：整个本机 catalog，这是普通业务 API 不隐含 active profile 的明确例外。
 
 Query：
 
@@ -54,7 +54,7 @@ Query：
 
 ## 3. Create profile — `POST /api/v1/profiles`
 
-Headers：`Authorization`、`X-Request-Id`、`Idempotency-Key` 必填；不使用 `If-Match`。Body：
+Headers：浏览器会话、`X-LedgerX-CSRF`、`X-Request-Id`、`Idempotency-Key` 必填；不使用 `If-Match`。Body：
 
 | 字段 | 类型 | 必填/空值 | 校验/映射 |
 | --- | --- | --- | --- |
@@ -135,4 +135,4 @@ Path lowercase UUID，`If-Match`、`Idempotency-Key` 必填，无 body。只允�
 | 归档 inactive 后重试同 key | 回放首次 200；换新 key再次归档为 409。 |
 | 缺 token/错 Origin | 401/403；application/repository 零调用。 |
 
-建议测试：profile 规则单元、V001→V002 migration、SQLite/filesystem 故障补偿、HTTP fixture、真实 Java 重开；Vue/Electron 空间切换在对应 UI Task 执行。
+建议测试：profile 规则单元、V001→V002 migration、SQLite/filesystem 故障补偿、HTTP fixture、真实 Java 重开；Vue/浏览器空间切换在对应 UI Task 执行。

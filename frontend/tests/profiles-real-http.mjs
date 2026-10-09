@@ -125,6 +125,7 @@ try {
   await defaultRow.getByText('当前空间').waitFor({ state: 'visible' });
 
   const createdName = `真实隔离空间-${Date.now()}`;
+  await page.getByRole('button', { name: '添加空间' }).click();
   await page.getByLabel('新建用户空间').fill(createdName);
   await page.getByRole('button', { name: '创建' }).click();
   await page.getByText('创建用户空间成功。').waitFor({ state: 'visible', timeout: 15_000 });

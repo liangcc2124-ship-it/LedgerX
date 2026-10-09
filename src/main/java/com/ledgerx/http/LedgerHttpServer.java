@@ -9,6 +9,11 @@ import com.ledgerx.application.profile.ProfileApi;
 import com.ledgerx.application.profile.ProfileApiResult;
 import com.ledgerx.application.profile.ProfileException;
 import com.ledgerx.application.profile.ProfileMutation;
+import com.ledgerx.application.ledgerinitialization.LedgerInitializationApi;
+import com.ledgerx.application.ledgerinitialization.LedgerInitializationApiResult;
+import com.ledgerx.application.ledgerinitialization.LedgerInitializationDraft;
+import com.ledgerx.application.ledgerinitialization.LedgerInitializationException;
+import com.ledgerx.application.ledgerinitialization.LedgerInitializationMutation;
 import com.ledgerx.application.ledger.CategoryApi;
 import com.ledgerx.application.ledger.CategoryApiResult;
 import com.ledgerx.application.ledger.CategoryException;
@@ -33,6 +38,24 @@ import com.ledgerx.application.settings.SettingsMutation;
 import com.ledgerx.application.settings.SettingsPatch;
 import com.ledgerx.application.system.SystemStatus;
 import com.ledgerx.application.system.SystemStatusProvider;
+import com.ledgerx.application.metrics.DashboardApi;
+import com.ledgerx.application.metrics.DashboardApiResult;
+import com.ledgerx.application.metrics.DashboardException;
+import com.ledgerx.application.metrics.MetricApiResult;
+import com.ledgerx.application.metrics.MetricException;
+import com.ledgerx.application.metrics.MetricGranularity;
+import com.ledgerx.application.metrics.MetricsApi;
+import com.ledgerx.application.metrics.MetricDraft;
+import com.ledgerx.application.metrics.MetricMutation;
+import com.ledgerx.application.metrics.FormulaNode;
+import com.ledgerx.application.metrics.FormulaDraftRequest;
+import com.ledgerx.application.metrics.DashboardLayoutDraft;
+import com.ledgerx.application.metrics.DashboardMutation;
+import com.ledgerx.persistence.LedgerMetricsRepository.LayoutItemRecord;
+import com.ledgerx.application.backup.BackupApi;
+import com.ledgerx.application.backup.BackupApiResult;
+import com.ledgerx.application.backup.BackupDownload;
+import com.ledgerx.application.backup.BackupException;
 import com.sun.net.httpserver.Headers;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
@@ -47,8 +70,7 @@ import java.net.InetSocketAddress;
 import java.net.URI;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Path;
-import java.nio.file.Paths;
+import java.nio.file.Files;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
@@ -71,12 +93,11 @@ public final class LedgerHttpServer implements AutoCloseable {
     public static final int MAX_JSON_BODY_BYTES = 1024 * 1024;
     private static final String API_VERSION = "1.0";
     private static final String READY_PREFIX = "LEDGERX_READY ";
-    private static final String WEB_ROOT_ENVIRONMENT_NAME = "LEDGERX_WEB_ROOT";
     private static final Pattern REQUEST_ID_FORMAT = Pattern.compile(
             "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}");
 
     private final HttpServer server;
-    private final String sessionToken;
+    private final BrowserSession browserSession;
     private final StaticResourceManifest resources;
     private final SystemStatusProvider statusProvider;
     private final ProfileApi profileApi;
@@ -84,6 +105,10 @@ public final class LedgerHttpServer implements AutoCloseable {
     private final CategoryApi categoryApi;
     private final AccountApi accountApi;
     private final RecordApi recordApi;
+    private final MetricsApi metricsApi;
+    private final DashboardApi dashboardApi;
+    private final LedgerInitializationApi initializationApi;
+    private final BackupApi backupApi;
     private final PrintStream readinessOut;
     private final BoundedRequestExecutor executor;
     private final ObjectMapper objectMapper;
@@ -91,14 +116,13 @@ public final class LedgerHttpServer implements AutoCloseable {
     private final AtomicBoolean readinessWritten = new AtomicBoolean();
 
     public LedgerHttpServer(
-            String sessionToken,
             InetSocketAddress bindAddress,
             StaticResourceManifest resources,
             SystemStatusProvider statusProvider,
             PrintStream readinessOut,
             int workers,
             int queueCapacity) throws IOException {
-        this(sessionToken, bindAddress, resources, statusProvider,
+        this(bindAddress, resources, statusProvider,
                 statusProvider instanceof ProfileApi ? (ProfileApi) statusProvider : null,
                 statusProvider instanceof SettingsApi ? (SettingsApi) statusProvider : null,
                 statusProvider instanceof CategoryApi ? (CategoryApi) statusProvider : null,
@@ -108,7 +132,6 @@ public final class LedgerHttpServer implements AutoCloseable {
     }
 
     public LedgerHttpServer(
-            String sessionToken,
             InetSocketAddress bindAddress,
             StaticResourceManifest resources,
             SystemStatusProvider statusProvider,
@@ -116,7 +139,7 @@ public final class LedgerHttpServer implements AutoCloseable {
             PrintStream readinessOut,
             int workers,
             int queueCapacity) throws IOException {
-        this(sessionToken, bindAddress, resources, statusProvider, profileApi,
+        this(bindAddress, resources, statusProvider, profileApi,
                 statusProvider instanceof SettingsApi ? (SettingsApi) statusProvider : null,
                 statusProvider instanceof CategoryApi ? (CategoryApi) statusProvider : null,
                 statusProvider instanceof AccountApi ? (AccountApi) statusProvider : null,
@@ -125,7 +148,6 @@ public final class LedgerHttpServer implements AutoCloseable {
     }
 
     public LedgerHttpServer(
-            String sessionToken,
             InetSocketAddress bindAddress,
             StaticResourceManifest resources,
             SystemStatusProvider statusProvider,
@@ -134,7 +156,7 @@ public final class LedgerHttpServer implements AutoCloseable {
             PrintStream readinessOut,
             int workers,
             int queueCapacity) throws IOException {
-        this(sessionToken, bindAddress, resources, statusProvider, profileApi, settingsApi,
+        this(bindAddress, resources, statusProvider, profileApi, settingsApi,
                 statusProvider instanceof CategoryApi ? (CategoryApi) statusProvider : null,
                 statusProvider instanceof AccountApi ? (AccountApi) statusProvider : null,
                 statusProvider instanceof RecordApi ? (RecordApi) statusProvider : null,
@@ -142,7 +164,6 @@ public final class LedgerHttpServer implements AutoCloseable {
     }
 
     public LedgerHttpServer(
-            String sessionToken,
             InetSocketAddress bindAddress,
             StaticResourceManifest resources,
             SystemStatusProvider statusProvider,
@@ -152,14 +173,13 @@ public final class LedgerHttpServer implements AutoCloseable {
             PrintStream readinessOut,
             int workers,
             int queueCapacity) throws IOException {
-        this(sessionToken, bindAddress, resources, statusProvider, profileApi, settingsApi, categoryApi,
+        this(bindAddress, resources, statusProvider, profileApi, settingsApi, categoryApi,
                 statusProvider instanceof AccountApi ? (AccountApi) statusProvider : null,
                 statusProvider instanceof RecordApi ? (RecordApi) statusProvider : null,
                 readinessOut, workers, queueCapacity);
     }
 
     public LedgerHttpServer(
-            String sessionToken,
             InetSocketAddress bindAddress,
             StaticResourceManifest resources,
             SystemStatusProvider statusProvider,
@@ -171,7 +191,7 @@ public final class LedgerHttpServer implements AutoCloseable {
             PrintStream readinessOut,
             int workers,
             int queueCapacity) throws IOException {
-        this.sessionToken = SessionToken.require(sessionToken);
+        this.browserSession = new BrowserSession();
         validateBindAddress(bindAddress);
         this.resources = require(resources, "resources");
         this.statusProvider = require(statusProvider, "statusProvider");
@@ -180,6 +200,11 @@ public final class LedgerHttpServer implements AutoCloseable {
         this.categoryApi = categoryApi;
         this.accountApi = accountApi;
         this.recordApi = recordApi;
+        this.metricsApi = statusProvider instanceof MetricsApi ? (MetricsApi) statusProvider : null;
+        this.dashboardApi = statusProvider instanceof DashboardApi ? (DashboardApi) statusProvider : null;
+        this.initializationApi = statusProvider instanceof LedgerInitializationApi
+                ? (LedgerInitializationApi) statusProvider : null;
+        this.backupApi = statusProvider instanceof BackupApi ? (BackupApi) statusProvider : null;
         this.readinessOut = require(readinessOut, "readinessOut");
         this.executor = new BoundedRequestExecutor(workers, queueCapacity);
         this.objectMapper = new ObjectMapper();
@@ -190,31 +215,26 @@ public final class LedgerHttpServer implements AutoCloseable {
     }
 
     public static LedgerHttpServer fromEnvironment(PrintStream readinessOut) throws IOException {
-        String token = SessionToken.fromEnvironment(System.getenv());
-        StaticResourceManifest resources = resourcesFromEnvironment();
+        StaticResourceManifest resources = StaticResourceManifest.fromClasspath();
         ApplicationRuntime runtime = ApplicationBootstrap.runtimeFromEnvironment(BuildMetadata.applicationVersion());
-        return new LedgerHttpServer(
-                token,
-                new InetSocketAddress("127.0.0.1", 0),
-                resources,
-                runtime,
-                runtime,
-                readinessOut,
-                DEFAULT_WORKERS,
-                DEFAULT_QUEUE_CAPACITY);
+        return new LedgerHttpServer(new InetSocketAddress("127.0.0.1", 0), resources, runtime, runtime,
+                readinessOut, DEFAULT_WORKERS, DEFAULT_QUEUE_CAPACITY);
     }
 
-    private static StaticResourceManifest resourcesFromEnvironment() throws IOException {
-        String configured = System.getenv(WEB_ROOT_ENVIRONMENT_NAME);
-        if (configured == null || configured.trim().isEmpty()) {
-            return StaticResourceManifest.fromClasspath();
-        }
-        try {
-            Path root = Paths.get(configured);
-            return StaticResourceManifest.fromDirectory(root);
-        } catch (IllegalArgumentException ex) {
-            throw new IOException("configured web root is invalid", ex);
-        }
+    static LedgerHttpServer forBrowser(
+            InetSocketAddress bindAddress,
+            StaticResourceManifest resources,
+            SystemStatusProvider statusProvider,
+            PrintStream readinessOut,
+            int workers,
+            int queueCapacity) throws IOException {
+        ProfileApi profiles = statusProvider instanceof ProfileApi ? (ProfileApi) statusProvider : null;
+        SettingsApi settings = statusProvider instanceof SettingsApi ? (SettingsApi) statusProvider : null;
+        CategoryApi categories = statusProvider instanceof CategoryApi ? (CategoryApi) statusProvider : null;
+        AccountApi accounts = statusProvider instanceof AccountApi ? (AccountApi) statusProvider : null;
+        RecordApi records = statusProvider instanceof RecordApi ? (RecordApi) statusProvider : null;
+        return new LedgerHttpServer(bindAddress, resources, statusProvider, profiles, settings,
+                categories, accounts, records, readinessOut, workers, queueCapacity);
     }
 
     public void start() {
@@ -308,23 +328,44 @@ public final class LedgerHttpServer implements AutoCloseable {
         if (requestId == null) {
             return;
         }
+        if ("/api/v1/system/session".equals(path)) {
+            handleSessionBootstrap(exchange, requestId);
+            return;
+        }
         if (!networkAllowed(exchange, isMutation(exchange.getRequestMethod()))) {
             sendError(exchange, 403, "REQUEST_ORIGIN_FORBIDDEN", "请求来源不被允许。", requestId, false,
                     Collections.emptyMap());
             return;
         }
-        if (!SessionToken.matches(sessionToken, exchange.getRequestHeaders().getFirst("Authorization"))) {
-            sendError(exchange, 401, "AUTHENTICATION_REQUIRED", "需要有效的本地会话认证。", requestId, false,
-                    Collections.emptyMap());
+        if (!browserSession.matchesCookie(cookieValue(exchange))) {
+            sendError(exchange, 401, "AUTHENTICATION_REQUIRED", "本机浏览器会话已失效，请重新打开应用。",
+                    requestId, false, Collections.emptyMap());
+            return;
+        }
+        if (isMutation(exchange.getRequestMethod())
+                && !browserSession.matchesCsrf(exchange.getRequestHeaders().getFirst("X-LedgerX-CSRF"))) {
+            sendError(exchange, 403, "INVALID_CSRF_TOKEN", "请求防伪校验失败，请刷新页面后重试。",
+                    requestId, false, Collections.emptyMap());
             return;
         }
         ParsedBody body = validateBody(exchange, requestId);
         if (body == null) {
             return;
         }
+        if (!"/api/v1/system/status".equals(path)) {
+            SystemStatus status = statusProvider.current();
+            if ("READY".equals(status.getState()) && status.getSetupState() != null
+                    && !"COMPLETED".equals(status.getSetupState()) && !isAllowedDuringSetup(path)) {
+                sendError(exchange, 409, "LEDGER_SETUP_REQUIRED", "请先完成账本初始化，再使用此功能。", requestId,
+                        false, Collections.emptyMap());
+                return;
+            }
+        }
         try {
             if ("/api/v1/system/status".equals(path)) {
                 handleSystemStatus(exchange, requestId);
+            } else if ("/api/v1/ledger-initialization".equals(path)) {
+                handleLedgerInitialization(exchange, body.json, requestId);
             } else if ("/api/v1/profiles".equals(path) || path.startsWith("/api/v1/profiles/")) {
                 handleProfiles(exchange, path, body.json, requestId);
             } else if ("/api/v1/settings".equals(path)) {
@@ -335,6 +376,17 @@ public final class LedgerHttpServer implements AutoCloseable {
                 handleAccounts(exchange, path, body.json, requestId);
             } else if ("/api/v1/records".equals(path) || path.startsWith("/api/v1/records/")) {
                 handleRecords(exchange, path, body.json, requestId);
+            } else if ("/api/v1/metrics".equals(path) || path.startsWith("/api/v1/metrics/")) {
+                handleMetrics(exchange, path, body.json, requestId);
+            } else if ("/api/v1/formulas/validate".equals(path)
+                    || "/api/v1/formulas/preview".equals(path)
+                    || path.startsWith("/api/v1/formulas/")) {
+                handleFormulas(exchange, path, body.json, requestId);
+            } else if ("/api/v1/dashboard".equals(path) || "/api/v1/dashboard/layout".equals(path)
+                    || "/api/v1/dashboard/layout/reset".equals(path)) {
+                handleDashboard(exchange, path, body.json, requestId);
+            } else if ("/api/v1/backups".equals(path) || path.startsWith("/api/v1/backups/")) {
+                handleBackups(exchange, path, body.json, requestId);
             } else if (path.startsWith("/api/v1/operations/")) {
                 handleOperation(exchange, path, requestId);
             } else {
@@ -356,7 +408,265 @@ public final class LedgerHttpServer implements AutoCloseable {
         } catch (RecordException ex) {
             sendError(exchange, ex.getHttpStatus(), ex.getCode(), ex.getMessage(), requestId, false,
                     ex.getFieldErrors(), ex.getDetails(), Collections.emptyMap());
+        } catch (MetricException ex) {
+            sendError(exchange, ex.getHttpStatus(), ex.getCode(), ex.getMessage(), requestId, false,
+                    ex.getFieldErrors(), ex.getDetails(), Collections.emptyMap());
+        } catch (DashboardException ex) {
+            sendError(exchange, ex.getHttpStatus(), ex.getCode(), ex.getMessage(), requestId, false,
+                    ex.getFieldErrors(), ex.getDetails(), Collections.emptyMap());
+        } catch (LedgerInitializationException ex) {
+            sendError(exchange, ex.getHttpStatus(), ex.getCode(), ex.getMessage(), requestId, false,
+                    ex.getFieldErrors(), ex.getDetails(), Collections.emptyMap());
+        } catch (BackupException ex) {
+            sendError(exchange, ex.getHttpStatus(), ex.getCode(), ex.getMessage(), requestId, false,
+                    ex.getFieldErrors(), ex.getDetails(), Collections.emptyMap());
         }
+    }
+
+    private void handleBackups(HttpExchange exchange, String path, JsonNode body, String requestId)
+            throws IOException, BackupException, ProfileException {
+        if (backupApi == null) throw new BackupException(423, "RECOVERY_REQUIRED", "数据恢复完成前不能操作备份。");
+        String method = exchange.getRequestMethod();
+        if ("/api/v1/backups".equals(path)) {
+            if ("POST".equals(method)) {
+                if (body == null || !body.isObject() || body.size() != 0) {
+                    throw new BackupException(400, "VALIDATION_FAILED", "请求参数无效。",
+                            Collections.singletonMap("body", "请求体必须是空对象。"), Collections.emptyMap());
+                }
+                String key = exchange.getRequestHeaders().getFirst("Idempotency-Key");
+                sendBackupResult(exchange, backupApi.createBackup(key), requestId);
+                return;
+            }
+            if ("GET".equals(method)) {
+                Map<String, String> query = singleQuery(exchange.getRequestURI(), setOf("limit", "cursor"));
+                int limit = backupLimit(query.get("limit"));
+                sendBackupResult(exchange, backupApi.listBackups(limit, query.get("cursor")), requestId);
+                return;
+            }
+            methodNotAllowed(exchange, requestId, "GET, POST");
+            return;
+        }
+        String remaining = path.substring("/api/v1/backups/".length());
+        int slash = remaining.indexOf('/');
+        if (slash <= 0 || slash != remaining.lastIndexOf('/')) {
+            sendError(exchange, 404, "ROUTE_NOT_FOUND", "路由不存在。", requestId, false, Collections.emptyMap());
+            return;
+        }
+        String id = remaining.substring(0, slash);
+        String action = remaining.substring(slash + 1);
+        if (!"GET".equals(method)) {
+            methodNotAllowed(exchange, requestId, "GET");
+            return;
+        }
+        if ("verify".equals(action)) {
+            sendBackupResult(exchange, backupApi.verifyBackup(id), requestId);
+            return;
+        }
+        if ("download".equals(action)) {
+            sendBackupDownload(exchange, backupApi.openBackupDownload(id), requestId);
+            return;
+        }
+        sendError(exchange, 404, "ROUTE_NOT_FOUND", "路由不存在。", requestId, false, Collections.emptyMap());
+    }
+
+    private void sendBackupResult(HttpExchange exchange, BackupApiResult result, String requestId) throws IOException {
+        Map<String, String> headers = new LinkedHashMap<>();
+        if (result.getLocation() != null) headers.put("Location", result.getLocation());
+        sendJson(exchange, result.getStatus(), result.getResponseJson().getBytes(StandardCharsets.UTF_8), requestId,
+                "no-store", headers);
+    }
+
+    private void sendBackupDownload(HttpExchange exchange, BackupDownload download, String requestId)
+            throws IOException {
+        Headers headers = exchange.getResponseHeaders();
+        headers.set("Content-Type", "application/vnd.ledgerx.backup+zip");
+        headers.set("Content-Disposition", "attachment; filename=\"" + download.getId() + ".ledgerx-backup\"");
+        headers.set("Cache-Control", "no-store");
+        headers.set("Content-Length", String.valueOf(download.getSize()));
+        headers.set("LedgerX-Api-Version", API_VERSION);
+        headers.set("X-Request-Id", requestId);
+        exchange.sendResponseHeaders(200, download.getSize());
+        try (InputStream input = Files.newInputStream(download.getFile());
+                OutputStream output = exchange.getResponseBody()) {
+            byte[] buffer = new byte[8192];
+            for (int read; (read = input.read(buffer)) >= 0;) output.write(buffer, 0, read);
+        }
+    }
+
+    private static int backupLimit(String value) throws BackupException {
+        if (value == null) return 25;
+        try {
+            int parsed = Integer.parseInt(value);
+            if (parsed < 1 || parsed > 100) throw new NumberFormatException();
+            return parsed;
+        } catch (NumberFormatException ex) {
+            throw new BackupException(400, "VALIDATION_FAILED", "请求参数无效。",
+                    Collections.singletonMap("limit", "必须在 1 到 100 之间。"), Collections.emptyMap());
+        }
+    }
+
+    private static boolean isAllowedDuringSetup(String path) {
+        return "/api/v1/system/status".equals(path)
+                || "/api/v1/ledger-initialization".equals(path)
+                || "/api/v1/profiles".equals(path) || path.startsWith("/api/v1/profiles/")
+                || path.startsWith("/api/v1/operations/");
+    }
+
+    private void handleLedgerInitialization(HttpExchange exchange, JsonNode body, String requestId)
+            throws IOException, LedgerInitializationException {
+        if (initializationApi == null) {
+            throw new LedgerInitializationException(423, "RECOVERY_REQUIRED", "数据恢复完成前不能初始化账本。");
+        }
+        String method = exchange.getRequestMethod();
+        if ("GET".equals(method)) {
+            LedgerInitializationApiResult result = initializationApi.readInitialization();
+            sendJson(exchange, result.getStatus(), result.getResponseJson().getBytes(StandardCharsets.UTF_8),
+                    requestId, "no-store", Collections.emptyMap());
+            return;
+        }
+        if (!"POST".equals(method)) {
+            sendError(exchange, 405, "METHOD_NOT_ALLOWED", "请求方法不被允许。", requestId, false,
+                    Collections.singletonMap("Allow", "GET, POST"));
+            return;
+        }
+        LedgerInitializationDraft draft = parseInitializationDraft(body);
+        String key = exchange.getRequestHeaders().getFirst("Idempotency-Key");
+        if (key == null || !key.matches("[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}")) {
+            throw new LedgerInitializationException(400, "VALIDATION_FAILED", "请求参数无效。",
+                    Collections.singletonMap("Idempotency-Key", "必须提供小写 UUID。"), Collections.emptyMap());
+        }
+        Map<String, Object> canonical = initializationCanonicalBody(draft);
+        String hash;
+        try {
+            hash = canonicalHash(canonical);
+        } catch (JsonProcessingException ex) {
+            throw new LedgerInitializationException(500, "INTERNAL_ERROR", "本地服务发生内部错误。");
+        }
+        LedgerInitializationApiResult result = initializationApi.initializeLedger(draft,
+                new LedgerInitializationMutation(key, hash));
+        sendJson(exchange, result.getStatus(), result.getResponseJson().getBytes(StandardCharsets.UTF_8),
+                requestId, "no-store", Collections.emptyMap());
+    }
+
+    private LedgerInitializationDraft parseInitializationDraft(JsonNode value)
+            throws LedgerInitializationException {
+        if (value == null || !value.isObject()) throw setupValidation("body", "请求体必须是 JSON 对象。");
+        Set<String> expected = new HashSet<>(Arrays.asList("ledgerStartOn", "defaultAccountOpeningOn",
+                "openingBalance", "accountName", "confirmExistingData", "accountOpeningDates"));
+        java.util.Iterator<String> fields = value.fieldNames();
+        while (fields.hasNext()) if (!expected.contains(fields.next())) throw setupValidation("body", "请求体包含不支持的字段。");
+        if (value.size() < expected.size() - 1 || value.size() > expected.size()) {
+            throw setupValidation("body", "初始化请求缺少必填字段。");
+        }
+        for (String required : Arrays.asList("ledgerStartOn", "defaultAccountOpeningOn", "openingBalance",
+                "confirmExistingData", "accountOpeningDates")) {
+            if (!value.has(required)) throw setupValidation(required, "必须提供此字段。");
+        }
+        LocalDate start = setupDate(value.get("ledgerStartOn"), "ledgerStartOn");
+        LocalDate defaultOpening = setupDate(value.get("defaultAccountOpeningOn"), "defaultAccountOpeningOn");
+        String openingBalance = setupText(value.get("openingBalance"), "openingBalance");
+        String accountName = value.has("accountName") && !value.get("accountName").isNull()
+                ? setupText(value.get("accountName"), "accountName") : null;
+        JsonNode confirm = value.get("confirmExistingData");
+        if (confirm == null || !confirm.isBoolean()) throw setupValidation("confirmExistingData", "必须是 boolean 值。");
+        JsonNode dates = value.get("accountOpeningDates");
+        if (dates == null || !dates.isArray()) throw setupValidation("accountOpeningDates", "必须是数组。");
+        Map<String, LocalDate> openingDates = new LinkedHashMap<>();
+        String previousId = null;
+        for (JsonNode item : dates) {
+            if (!item.isObject() || item.size() != 2 || !item.has("accountId") || !item.has("openingOn")) {
+                throw setupValidation("accountOpeningDates", "每项必须包含 accountId 和 openingOn。");
+            }
+            String accountId = setupText(item.get("accountId"), "accountOpeningDates.accountId");
+            if (!accountId.matches("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+                    || openingDates.containsKey(accountId) || (previousId != null && previousId.compareTo(accountId) >= 0)) {
+                throw setupValidation("accountOpeningDates", "账户必须按 accountId 升序且不能重复。");
+            }
+            LocalDate openingOn = setupDate(item.get("openingOn"), "accountOpeningDates.openingOn");
+            openingDates.put(accountId, openingOn);
+            previousId = accountId;
+        }
+        return new LedgerInitializationDraft(start, defaultOpening, openingBalance, accountName,
+                confirm.booleanValue(), openingDates);
+    }
+
+    private Map<String, Object> initializationCanonicalBody(LedgerInitializationDraft draft) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("ledgerStartOn", draft.getLedgerStartOn().toString());
+        body.put("defaultAccountOpeningOn", draft.getDefaultAccountOpeningOn().toString());
+        body.put("openingBalance", draft.getOpeningBalance());
+        body.put("accountName", draft.getAccountName());
+        body.put("confirmExistingData", draft.isConfirmExistingData());
+        List<Map<String, Object>> dates = new ArrayList<>();
+        for (Map.Entry<String, LocalDate> entry : draft.getAccountOpeningDates().entrySet()) {
+            Map<String, Object> item = new LinkedHashMap<>();
+            item.put("accountId", entry.getKey());
+            item.put("openingOn", entry.getValue().toString());
+            dates.add(item);
+        }
+        body.put("accountOpeningDates", dates);
+        return body;
+    }
+
+    private static LocalDate setupDate(JsonNode value, String field) throws LedgerInitializationException {
+        if (value == null || !value.isTextual()) throw setupValidation(field, "必须是 YYYY-MM-DD。");
+        String text = value.textValue();
+        try {
+            if (!text.matches("\\d{4}-\\d{2}-\\d{2}")) throw new IllegalArgumentException();
+            return LocalDate.parse(text);
+        } catch (RuntimeException ex) {
+            throw setupValidation(field, "必须是有效的 YYYY-MM-DD 日期。");
+        }
+    }
+
+    private static String setupText(JsonNode value, String field) throws LedgerInitializationException {
+        if (value == null || !value.isTextual()) throw setupValidation(field, "必须提供字符串值。");
+        return value.textValue();
+    }
+
+    private static LedgerInitializationException setupValidation(String field, String message) {
+        return new LedgerInitializationException(400, "VALIDATION_FAILED", "请求参数无效。",
+                Collections.singletonMap(field, message), Collections.emptyMap());
+    }
+
+    private void handleSessionBootstrap(HttpExchange exchange, String requestId) throws IOException {
+        if (!"GET".equals(exchange.getRequestMethod())) {
+            sendError(exchange, 405, "METHOD_NOT_ALLOWED", "请求方法不被允许。", requestId, false,
+                    Collections.singletonMap("Allow", "GET"));
+            return;
+        }
+        if (!networkAllowed(exchange, false)) {
+            sendError(exchange, 403, "REQUEST_ORIGIN_FORBIDDEN", "请求来源不被允许。", requestId, false,
+                    Collections.emptyMap());
+            return;
+        }
+        Map<String, Object> data = new LinkedHashMap<>();
+        if (!browserSession.matchesCookie(cookieValue(exchange))) {
+            exchange.getResponseHeaders().add("Set-Cookie", browserSession.setCookieHeader());
+        }
+        data.put("authMode", "browser");
+        data.put("csrfToken", browserSession.csrfToken());
+        Map<String, Object> response = new LinkedHashMap<>();
+        response.put("data", data);
+        sendJson(exchange, 200, json(response), requestId, "no-store", Collections.emptyMap());
+    }
+
+    private static String cookieValue(HttpExchange exchange) {
+        String found = null;
+        for (String header : exchange.getRequestHeaders().getOrDefault("Cookie", Collections.emptyList())) {
+            for (String item : header.split(";")) {
+                String candidate = item.trim();
+                int equals = candidate.indexOf('=');
+                if (equals <= 0 || !BrowserSession.COOKIE_NAME.equals(candidate.substring(0, equals).trim())) {
+                    continue;
+                }
+                if (found != null) {
+                    return null;
+                }
+                found = candidate.substring(equals + 1).trim();
+            }
+        }
+        return found;
     }
 
     private void handleSystemStatus(HttpExchange exchange, String requestId) throws IOException {
@@ -373,6 +683,8 @@ public final class LedgerHttpServer implements AutoCloseable {
         data.put("backupFormatVersion", status.getBackupFormatVersion());
         data.put("activeProfileId", status.getActiveProfileId());
         data.put("state", status.getState());
+        data.put("setupState", status.getSetupState());
+        data.put("ledgerStartOn", status.getLedgerStartOn());
         data.put("capabilities", status.getCapabilities());
         Map<String, Object> meta = new LinkedHashMap<>();
         meta.put("dataRevision", status.getDataRevision());
@@ -493,6 +805,376 @@ public final class LedgerHttpServer implements AutoCloseable {
         long revision = parseSettingsIfMatch(exchange);
         SettingsMutation mutation = settingsMutation(exchange, request.canonicalBody);
         sendSettingsResult(exchange, settingsApi.update(revision, request.patch, mutation), requestId);
+    }
+
+    private void handleMetrics(HttpExchange exchange, String path, JsonNode body, String requestId)
+            throws IOException, MetricException {
+        if (metricsApi == null) throw new MetricException(423, "RECOVERY_REQUIRED", "数据恢复完成前不能读取指标。");
+        String method = exchange.getRequestMethod();
+        if ("/api/v1/metrics".equals(path)) {
+            if ("POST".equals(method)) {
+                JsonNode object = metricObject(body);
+                MetricDraft draft = parseMetricDraft(object, true, null);
+                sendMetricResult(exchange, metricsApi.createMetric(draft,
+                        metricMutation(exchange, "POST", path, metricCanonical(object))), requestId);
+                return;
+            }
+            if (!"GET".equals(method)) { methodNotAllowed(exchange, requestId, "GET, POST"); return; }
+            Map<String, String> query = metricQuery(exchange.getRequestURI(),
+                    setOf("status", "dashboardEnabled", "limit", "cursor"));
+            String status = query.get("status");
+            if (status != null && !"ACTIVE".equals(status) && !"ARCHIVED".equals(status)) {
+                throw metricValidation("status", "只能是 ACTIVE 或 ARCHIVED。");
+            }
+            if (query.containsKey("dashboardEnabled")) {
+                String enabled = query.get("dashboardEnabled");
+                if (!"true".equals(enabled) && !"false".equals(enabled)) {
+                    throw metricValidation("dashboardEnabled", "必须是 true 或 false。");
+                }
+            }
+            int limit = query.containsKey("limit") ? parseMetricCollectionLimit(query.get("limit")) : 50;
+            Boolean dashboardEnabled = query.containsKey("dashboardEnabled")
+                    ? Boolean.valueOf(query.get("dashboardEnabled")) : null;
+            MetricApiResult result = metricsApi.listMetrics(new com.ledgerx.application.metrics.MetricListQuery(
+                    status == null ? "ACTIVE" : status, dashboardEnabled, limit, query.get("cursor")));
+            sendMetricResult(exchange, result, requestId);
+            return;
+        }
+        String prefix = "/api/v1/metrics/";
+        if (!path.startsWith(prefix)) {
+            sendError(exchange, 404, "ROUTE_NOT_FOUND", "路由不存在。", requestId, false, Collections.emptyMap());
+            return;
+        }
+        String id = path.substring(prefix.length());
+        if (id.isEmpty() || id.contains("/")) {
+            sendError(exchange, 404, "ROUTE_NOT_FOUND", "路由不存在。", requestId, false, Collections.emptyMap());
+            return;
+        }
+        if ("PUT".equals(method)) {
+            JsonNode object = metricObject(body);
+            if (isVisibilityOnlyMetricUpdate(object)) {
+                JsonNode visibility = object.get("visibility");
+                sendMetricResult(exchange, metricsApi.updateSystemVisibility(id, metricIfMatch(exchange),
+                        visibility.get("hidden").asBoolean(), visibility.get("dashboardEnabled").asBoolean(),
+                        metricMutation(exchange, "PUT", path, metricCanonical(object))), requestId);
+                return;
+            }
+            MetricDraft draft = parseMetricDraft(object, false, null);
+            sendMetricResult(exchange, metricsApi.updateMetric(id, metricIfMatch(exchange), draft,
+                    metricMutation(exchange, "PUT", path, metricCanonical(object))), requestId);
+            return;
+        }
+        if ("DELETE".equals(method)) {
+            if (body != null) throw metricValidation("body", "归档请求不能包含请求体。");
+            sendMetricResult(exchange, metricsApi.archiveMetric(id, metricIfMatch(exchange),
+                    metricMutation(exchange, "DELETE", path, Collections.emptyMap())), requestId);
+            return;
+        }
+        if (!"GET".equals(method)) { methodNotAllowed(exchange, requestId, "GET, PUT, DELETE"); return; }
+        Map<String, String> query = metricQuery(exchange.getRequestURI(), setOf("status"));
+        String status = query.get("status");
+        if (status != null && !"ACTIVE".equals(status) && !"ARCHIVED".equals(status)) {
+            throw metricValidation("status", "只能是 ACTIVE 或 ARCHIVED。");
+        }
+        sendMetricResult(exchange, metricsApi.getMetric(id, "ARCHIVED".equals(status)), requestId);
+    }
+
+    private void handleFormulas(HttpExchange exchange, String path, JsonNode body, String requestId)
+            throws IOException, MetricException {
+        if (metricsApi == null) throw new MetricException(423, "RECOVERY_REQUIRED", "数据恢复完成前不能读取公式。");
+        if ("/api/v1/formulas/validate".equals(path) || "/api/v1/formulas/preview".equals(path)) {
+            if (!"POST".equals(exchange.getRequestMethod())) { methodNotAllowed(exchange, requestId, "POST"); return; }
+            if (exchange.getRequestURI().getRawQuery() != null) throw metricValidation("query", "公式接口不接受查询参数。");
+            FormulaDraftRequest draft = parseFormulaDraft(metricObject(body));
+            MetricApiResult result = "/api/v1/formulas/validate".equals(path)
+                    ? metricsApi.validateFormula(draft) : metricsApi.previewFormula(draft);
+            sendMetricResult(exchange, result, requestId);
+            return;
+        }
+        String prefix = "/api/v1/formulas/";
+        if (!path.startsWith(prefix) || !path.endsWith("/versions")) {
+            sendError(exchange, 404, "ROUTE_NOT_FOUND", "路由不存在。", requestId, false, Collections.emptyMap());
+            return;
+        }
+        String formulaId = path.substring(prefix.length(), path.length() - "/versions".length());
+        if (formulaId.isEmpty() || formulaId.contains("/")) {
+            sendError(exchange, 404, "ROUTE_NOT_FOUND", "路由不存在。", requestId, false, Collections.emptyMap());
+            return;
+        }
+        if (!"GET".equals(exchange.getRequestMethod())) { methodNotAllowed(exchange, requestId, "GET"); return; }
+        Map<String, String> query = metricQuery(exchange.getRequestURI(), setOf("limit", "cursor"));
+        int limit = query.containsKey("limit") ? parseMetricLimit(query.get("limit")) : 50;
+        sendMetricResult(exchange, metricsApi.listFormulaVersions(formulaId, limit, query.get("cursor")), requestId);
+    }
+
+    private FormulaDraftRequest parseFormulaDraft(JsonNode object) throws MetricException {
+        Set<String> allowed = new HashSet<>(Arrays.asList("candidateMetricId", "displayFormat", "formula",
+                "granularity", "anchor"));
+        java.util.Iterator<String> names = object.fieldNames();
+        while (names.hasNext()) if (!allowed.contains(names.next())) throw metricValidation("body", "包含不支持的字段。");
+        String candidate = requiredMetricText(object, "candidateMetricId");
+        String displayFormat = requiredMetricText(object, "displayFormat");
+        String granularityText = requiredMetricText(object, "granularity");
+        String anchorText = requiredMetricText(object, "anchor");
+        MetricGranularity granularity;
+        try { granularity = MetricGranularity.valueOf(granularityText); }
+        catch (IllegalArgumentException ex) { throw metricValidation("granularity", "只能是 DAY、WEEK、MONTH 或 YEAR。"); }
+        LocalDate anchor;
+        try { anchor = LocalDate.parse(anchorText); }
+        catch (Exception ex) { throw metricValidation("anchor", "必须是 YYYY-MM-DD。"); }
+        JsonNode formula = object.get("formula");
+        if (formula == null || !formula.isObject() || !formula.has("ast")) throw metricValidation("formula.ast", "公式不能为空。");
+        if (formula.has("tokens")) throw metricValidation("formula.tokens", "tokens 由服务端根据 AST 生成，请勿提交。");
+        java.util.Iterator<String> formulaFields = formula.fieldNames();
+        while (formulaFields.hasNext()) {
+            String field = formulaFields.next();
+            if (!"ast".equals(field)) throw metricValidation("formula." + field, "公式只接受 ast 字段。");
+        }
+        return new FormulaDraftRequest(candidate, displayFormat, FormulaHttpMapper.parseAst(formula.get("ast")), Collections.emptyList(),
+                granularity, anchor);
+    }
+
+    private int parseMetricLimit(String value) throws MetricException {
+        if (value == null || value.isEmpty()) return 50;
+        try {
+            int limit = Integer.parseInt(value);
+            if (limit < 1 || limit > 100) throw new NumberFormatException();
+            return limit;
+        } catch (NumberFormatException ex) { throw metricValidation("limit", "必须在 1 到 100 之间。"); }
+    }
+
+    private int parseMetricCollectionLimit(String value) throws MetricException {
+        if (value == null || value.isEmpty()) return 50;
+        try {
+            int limit = Integer.parseInt(value);
+            if (limit < 1 || limit > 200) throw new NumberFormatException();
+            return limit;
+        } catch (NumberFormatException ex) { throw metricValidation("limit", "必须在 1 到 200 之间。"); }
+    }
+
+    private void handleDashboard(HttpExchange exchange, String path, JsonNode body, String requestId)
+            throws IOException, DashboardException {
+        if (dashboardApi == null) throw new DashboardException(423, "RECOVERY_REQUIRED", "数据恢复完成前不能读取总览。");
+        String method = exchange.getRequestMethod();
+        if ("/api/v1/dashboard/layout".equals(path)) {
+            if ("PUT".equals(method)) {
+                JsonNode object = dashboardObject(body);
+                DashboardLayoutDraft draft = parseLayoutDraft(object);
+                sendDashboardResult(exchange, dashboardApi.replaceLayout(dashboardIfMatch(exchange), draft,
+                        dashboardMutation(exchange, "PUT", path, dashboardCanonical(object))), requestId);
+                return;
+            }
+            if (exchange.getRequestURI().getRawQuery() != null) {
+                throw dashboardValidation("query", "布局读取不接受查询参数。");
+            }
+            if (!"GET".equals(method)) { methodNotAllowed(exchange, requestId, "GET, PUT"); return; }
+            sendDashboardResult(exchange, dashboardApi.readLayout(), requestId);
+            return;
+        }
+        if ("POST".equals(method) && "/api/v1/dashboard/layout/reset".equals(path)) {
+            if (body == null || !body.isObject() || body.size() != 0) {
+                throw dashboardValidation("body", "重置请求体必须是空对象。");
+            }
+            sendDashboardResult(exchange, dashboardApi.resetLayout(dashboardIfMatch(exchange),
+                    dashboardMutation(exchange, "POST", path, Collections.emptyMap())), requestId);
+            return;
+        }
+        if (!"GET".equals(method)) { methodNotAllowed(exchange, requestId, "GET"); return; }
+        Map<String, String> query = dashboardQuery(exchange.getRequestURI(), setOf("granularity", "anchor"));
+        String granularityText = query.get("granularity");
+        String anchorText = query.get("anchor");
+        if (granularityText == null) throw dashboardValidation("granularity", "必须提供粒度。");
+        if (anchorText == null) throw dashboardValidation("anchor", "必须提供期间锚点。");
+        MetricGranularity granularity;
+        try {
+            granularity = MetricGranularity.valueOf(granularityText);
+        } catch (IllegalArgumentException ex) {
+            throw dashboardValidation("granularity", "只能是 DAY、WEEK、MONTH 或 YEAR。");
+        }
+        LocalDate anchor;
+        try {
+            anchor = LocalDate.parse(anchorText);
+        } catch (Exception ex) {
+            throw dashboardValidation("anchor", "必须是 YYYY-MM-DD。");
+        }
+        sendDashboardResult(exchange, dashboardApi.readDashboard(granularity, anchor), requestId);
+    }
+
+    private Map<String, String> metricQuery(URI uri, Set<String> allowed) throws MetricException {
+        Map<String, String> values = new LinkedHashMap<>();
+        String raw = uri.getRawQuery();
+        if (raw == null || raw.isEmpty()) return values;
+        for (String pair : raw.split("&", -1)) {
+            String[] parts = pair.split("=", 2);
+            String key;
+            String value;
+            try {
+                key = URLDecoder.decode(parts[0], StandardCharsets.UTF_8.name());
+                value = URLDecoder.decode(parts.length == 2 ? parts[1] : "", StandardCharsets.UTF_8.name());
+            } catch (Exception ex) {
+                throw metricValidation("query", "查询参数编码无效。");
+            }
+            if (!allowed.contains(key) || values.put(key, value) != null) {
+                throw metricValidation("query", "查询参数无效。");
+            }
+        }
+        return values;
+    }
+
+    private Map<String, String> dashboardQuery(URI uri, Set<String> allowed) throws DashboardException {
+        Map<String, String> values = new LinkedHashMap<>();
+        String raw = uri.getRawQuery();
+        if (raw == null || raw.isEmpty()) return values;
+        for (String pair : raw.split("&", -1)) {
+            String[] parts = pair.split("=", 2);
+            String key;
+            String value;
+            try {
+                key = URLDecoder.decode(parts[0], StandardCharsets.UTF_8.name());
+                value = URLDecoder.decode(parts.length == 2 ? parts[1] : "", StandardCharsets.UTF_8.name());
+            } catch (Exception ex) {
+                throw dashboardValidation("query", "查询参数编码无效。");
+            }
+            if (!allowed.contains(key) || values.put(key, value) != null) {
+                throw dashboardValidation("query", "查询参数无效。");
+            }
+        }
+        return values;
+    }
+
+    private static MetricException metricValidation(String field, String message) {
+        return new MetricException(400, "VALIDATION_FAILED", "请求参数无效。",
+                Collections.singletonMap(field, message), Collections.emptyMap());
+    }
+
+    private static DashboardException dashboardValidation(String field, String message) {
+        return new DashboardException(400, "VALIDATION_FAILED", "请求参数无效。",
+                Collections.singletonMap(field, message), Collections.emptyMap());
+    }
+
+    private void sendMetricResult(HttpExchange exchange, MetricApiResult result, String requestId) throws IOException {
+        Map<String, String> headers = new LinkedHashMap<>();
+        if (result.getEtag() != null) headers.put("ETag", result.getEtag());
+        if (result.getLocation() != null) headers.put("Location", result.getLocation());
+        sendJson(exchange, result.getStatus(), result.getResponseJson().getBytes(StandardCharsets.UTF_8), requestId,
+                "no-store", headers);
+    }
+
+    private void sendDashboardResult(HttpExchange exchange, DashboardApiResult result, String requestId)
+            throws IOException {
+        Map<String, String> headers = new LinkedHashMap<>();
+        if (result.getEtag() != null) headers.put("ETag", result.getEtag());
+        if (result.getLocation() != null) headers.put("Location", result.getLocation());
+        sendJson(exchange, result.getStatus(), result.getResponseJson().getBytes(StandardCharsets.UTF_8), requestId,
+                "no-store", headers);
+    }
+
+    private JsonNode metricObject(JsonNode value) throws MetricException {
+        if (value == null || !value.isObject()) throw metricValidation("body", "请求体必须是 JSON 对象。");
+        return value;
+    }
+
+    private MetricDraft parseMetricDraft(JsonNode object, boolean create, String id) throws MetricException {
+        Set<String> allowed = new HashSet<>(Arrays.asList("id", "name", "description", "displayFormat", "precision",
+                "visibility", "formula"));
+        java.util.Iterator<String> names = object.fieldNames();
+        while (names.hasNext()) if (!allowed.contains(names.next())) throw metricValidation("body", "包含不支持的字段。");
+        String draftId = create ? requiredMetricText(object, "id") : id;
+        if (create && !draftId.startsWith("custom-")) throw metricValidation("id", "必须是 custom-UUID v4。");
+        String name = requiredMetricText(object, "name");
+        String description = object.has("description") ? metricNullableText(object.get("description"), "description") : "";
+        String format = requiredMetricText(object, "displayFormat");
+        JsonNode precisionNode = object.get("precision");
+        if (precisionNode == null || !precisionNode.isIntegralNumber()) throw metricValidation("precision", "必须是整数。");
+        int precision = precisionNode.intValue();
+        JsonNode visibility = object.get("visibility");
+        if (visibility == null || !visibility.isObject() || !visibility.has("hidden") || !visibility.has("dashboardEnabled")
+                || !visibility.get("hidden").isBoolean() || !visibility.get("dashboardEnabled").isBoolean()) {
+            throw metricValidation("visibility", "必须包含 hidden 和 dashboardEnabled 布尔值。");
+        }
+        JsonNode formula = object.get("formula");
+        if (formula == null || !formula.isObject() || !formula.has("ast")) throw metricValidation("formula.ast", "公式不能为空。");
+        if (formula.has("tokens")) throw metricValidation("formula.tokens", "tokens 由服务端根据 AST 生成，请勿提交。");
+        java.util.Iterator<String> formulaFields = formula.fieldNames();
+        while (formulaFields.hasNext()) {
+            String field = formulaFields.next();
+            if (!"ast".equals(field)) throw metricValidation("formula." + field, "公式只接受 ast 字段。");
+        }
+        return new MetricDraft(draftId, name, description, format, precision,
+                object.path("periodBehavior").asText("PERIOD"), FormulaHttpMapper.parseAst(formula.get("ast")), Collections.emptyList(),
+                visibility.get("hidden").asBoolean(), visibility.get("dashboardEnabled").asBoolean());
+    }
+
+    private static boolean isVisibilityOnlyMetricUpdate(JsonNode object) throws MetricException {
+        if (object == null || !object.isObject() || object.size() != 1 || !object.has("visibility")) return false;
+        JsonNode visibility = object.get("visibility");
+        if (!visibility.isObject() || visibility.size() != 2 || !visibility.has("hidden")
+                || !visibility.has("dashboardEnabled") || !visibility.get("hidden").isBoolean()
+                || !visibility.get("dashboardEnabled").isBoolean()) {
+            throw metricValidation("visibility", "必须包含 hidden 和 dashboardEnabled 布尔值。");
+        }
+        return true;
+    }
+
+    private String requiredMetricText(JsonNode object, String field) throws MetricException {
+        JsonNode value = object.get(field); if (value == null || !value.isTextual() || value.textValue().isEmpty()) throw metricValidation(field, "必须提供字符串值。");
+        return value.textValue();
+    }
+
+    private String metricNullableText(JsonNode value, String field) throws MetricException {
+        if (value == null || value.isNull()) return ""; if (!value.isTextual()) throw metricValidation(field, "必须是字符串。"); return value.textValue();
+    }
+
+    private Map<String, Object> metricCanonical(JsonNode object) throws MetricException {
+        try { return objectMapper.convertValue(object, Map.class); }
+        catch (IllegalArgumentException ex) { throw metricValidation("body", "请求体无法规范化。"); }
+    }
+
+    private MetricMutation metricMutation(HttpExchange exchange, String method, String path, Map<String, Object> body)
+            throws MetricException {
+        String key = exchange.getRequestHeaders().getFirst("Idempotency-Key");
+        if (key == null || key.trim().isEmpty()) throw metricValidation("Idempotency-Key", "缺少幂等键。");
+        try { return new MetricMutation(key, method, path, canonicalHash(body)); }
+        catch (JsonProcessingException ex) { throw new MetricException(500, "INTERNAL_ERROR", "本地服务发生内部错误。"); }
+    }
+
+    private long metricIfMatch(HttpExchange exchange) throws MetricException {
+        String value = exchange.getRequestHeaders().getFirst("If-Match");
+        if (value == null || !value.matches("\\\"[0-9]+\\\"")) throw new MetricException(428, "PRECONDITION_REQUIRED", "需要 If-Match 版本。");
+        try { return Long.parseLong(value.substring(1, value.length() - 1)); }
+        catch (NumberFormatException ex) { throw metricValidation("If-Match", "必须是强 ETag。"); }
+    }
+
+    private JsonNode dashboardObject(JsonNode value) throws DashboardException {
+        if (value == null || !value.isObject()) throw dashboardValidation("body", "请求体必须是 JSON 对象。"); return value;
+    }
+
+    private DashboardLayoutDraft parseLayoutDraft(JsonNode object) throws DashboardException {
+        JsonNode values = object.get("items"); if (values == null || !values.isArray()) throw dashboardValidation("items", "必须是数组。");
+        List<LayoutItemRecord> items = new ArrayList<>();
+        for (int i = 0; i < values.size(); i++) {
+            JsonNode item = values.get(i); if (!item.isObject()) throw dashboardValidation("items[" + i + "]", "必须是对象。");
+            try { items.add(new LayoutItemRecord(item.path("widgetId").asText(), item.path("x").asInt(-1), item.path("y").asInt(-1), item.path("w").asInt(-1), item.path("h").asInt(-1), item.path("minW").asInt(-1), item.path("minH").asInt(-1), item.path("maxW").asInt(-1), item.path("maxH").asInt(-1))); }
+            catch (Exception ex) { throw dashboardValidation("items[" + i + "]", "布局项无效。"); }
+        }
+        return new DashboardLayoutDraft(items);
+    }
+
+    private Map<String, Object> dashboardCanonical(JsonNode object) throws DashboardException {
+        try { return objectMapper.convertValue(object, Map.class); }
+        catch (IllegalArgumentException ex) { throw dashboardValidation("body", "请求体无法规范化。"); }
+    }
+
+    private DashboardMutation dashboardMutation(HttpExchange exchange, String method, String path, Map<String, Object> body)
+            throws DashboardException {
+        String key = exchange.getRequestHeaders().getFirst("Idempotency-Key"); if (key == null || key.trim().isEmpty()) throw dashboardValidation("Idempotency-Key", "缺少幂等键。");
+        try { return new DashboardMutation(key, method, path, canonicalHash(body)); }
+        catch (JsonProcessingException ex) { throw new DashboardException(500, "INTERNAL_ERROR", "本地服务发生内部错误。"); }
+    }
+
+    private long dashboardIfMatch(HttpExchange exchange) throws DashboardException {
+        String value = exchange.getRequestHeaders().getFirst("If-Match"); if (value == null || !value.matches("\\\"[0-9]+\\\"")) throw new DashboardException(428, "PRECONDITION_REQUIRED", "需要 If-Match 版本。");
+        try { return Long.parseLong(value.substring(1, value.length() - 1)); } catch (NumberFormatException ex) { throw dashboardValidation("If-Match", "必须是强 ETag。"); }
     }
 
     private void handleCategories(HttpExchange exchange, String path, JsonNode body, String requestId)
@@ -997,6 +1679,12 @@ public final class LedgerHttpServer implements AutoCloseable {
         Headers headers = exchange.getResponseHeaders();
         headers.set("Content-Type", resource.getContentType());
         headers.set("Cache-Control", resource.getCacheControl());
+        headers.set("Content-Security-Policy",
+                "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; "
+                        + "connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'");
+        headers.set("X-Content-Type-Options", "nosniff");
+        headers.set("Referrer-Policy", "no-referrer");
+        headers.set("X-Frame-Options", "DENY");
         headers.set("Content-Length", String.valueOf(content.length));
         if ("HEAD".equals(method)) {
             exchange.sendResponseHeaders(200, -1);

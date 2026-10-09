@@ -1,8 +1,10 @@
 # ADR-006：Electron Forge 6.4.2 个人使用风险接受
 
+> 历史决策：Electron 已被 [ADR-014](./ADR-014-local-browser-only.md) 取代；Forge 不再进入当前构建或发布门禁。以下审计数据只解释旧版决策。
+
 - 状态：已接受（个人自用和小范围非商业分享；不设基础功能开发到期门禁）
 - 日期：2026-09-13
-- 关联：[ADR-004](./ADR-004-vue-electron-local-rest.md)、[S0-004](../tasks/S0-004-electron-shell.md)
+- 关联：[ADR-004](./ADR-004-vue-electron-local-rest.md)、[当前 Electron 稳定性任务](../tasks/P7-001-electron-runtime-stability.md)
 
 ## 背景
 

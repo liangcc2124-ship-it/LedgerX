@@ -4,7 +4,6 @@ import vue from '@vitejs/plugin-vue';
 const productionCsp = "'self'";
 const developmentCsp = "'self' 'unsafe-inline'";
 const loopbackOriginPattern = /^http:\/\/127\.0\.0\.1:(\d{1,5})\/?$/;
-const sessionTokenPattern = /^[A-Za-z0-9_-]{43}$/;
 
 const cspPlugin = {
   name: 'ledgerx-csp',
@@ -76,23 +75,16 @@ export function createDevProxy(env = {}, mode = 'development') {
   }
 
   const apiOrigin = readConfigValue(env, 'LEDGERX_DEV_API_ORIGIN');
-  const apiToken = readConfigValue(env, 'LEDGERX_DEV_API_TOKEN');
-
-  if (typeof apiOrigin !== 'string' || typeof apiToken !== 'string') {
+  if (typeof apiOrigin !== 'string') {
     throw configurationError('development proxy values must be strings');
   }
 
-  if (apiOrigin === '' && apiToken === '') {
+  if (apiOrigin === '') {
     return {};
   }
-
-  if (apiOrigin === '') {
-    throw configurationError('LEDGERX_DEV_API_ORIGIN is required when a token is provided');
-  }
-
   const targetOrigin = validateLoopbackOrigin(apiOrigin);
-  if (apiToken !== '' && !sessionTokenPattern.test(apiToken)) {
-    throw configurationError('LEDGERX_DEV_API_TOKEN must match the 43-character session-token format');
+  if (readConfigValue(env, 'LEDGERX_DEV_API_TOKEN')) {
+    throw configurationError('Bearer proxy authentication is no longer supported; use the local browser session');
   }
 
   return {
@@ -101,11 +93,7 @@ export function createDevProxy(env = {}, mode = 'development') {
       changeOrigin: true,
       configure(proxyServer) {
         proxyServer.on('proxyReq', (proxyRequest) => {
-          if (apiToken !== '') {
-            proxyRequest.setHeader('Authorization', `Bearer ${apiToken}`);
-          } else {
-            proxyRequest.removeHeader?.('Authorization');
-          }
+          proxyRequest.removeHeader?.('Authorization');
           proxyRequest.setHeader('Origin', targetOrigin);
         });
       },

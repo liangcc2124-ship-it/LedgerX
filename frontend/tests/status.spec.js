@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test } from './test-fixture.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -151,7 +151,7 @@ test('RECOVERY_REQUIRED shows recovery guidance and only manual refresh', async 
   await expect(page.getByRole('button', { name: '打开日志目录' })).toHaveCount(0);
 });
 
-test('recovery folder bridge failures show generic feedback without requiring a bridge', async ({ page }) => {
+test('recovery UI does not expose desktop-only folder actions', async ({ page }) => {
   await page.addInitScript(() => {
     window.desktop = {
       openLogsFolder: async () => ({ ok: false, error: { code: 'OPEN_FOLDER_FAILED' } }),
@@ -161,9 +161,9 @@ test('recovery folder bridge failures show generic feedback without requiring a 
   await routeStatus(page, 'recovery');
   await page.goto('/');
 
-  await expect(page.getByRole('button', { name: '打开日志目录' })).toBeVisible();
-  await page.getByRole('button', { name: '打开日志目录' }).click();
-  await expect(page.getByText('无法打开目录，请检查权限后重试。')).toBeVisible();
+  await expect(page.getByRole('button', { name: '刷新状态' })).toBeVisible();
+  await expect(page.getByRole('button', { name: '打开日志目录' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: '打开数据目录' })).toHaveCount(0);
 });
 
 test('retries latest status round and ignores an aborted stale response', async ({ page }) => {
@@ -195,9 +195,9 @@ test('shows an authentication error without treating 401 as success', async ({ p
   await routeStatus(page, 'unauthorized');
   await page.goto('/');
 
-  await expect(page.getByText('桌面会话无效')).toBeVisible();
+  await expect(page.getByText('本机网页会话已失效')).toBeVisible();
   await expect(page.getByText('本地服务已连接')).toHaveCount(0);
-  await expect(page.getByRole('button', { name: '重试连接' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: '刷新状态' })).toBeVisible();
 });
 
 test('shows a retryable server error and recovers on retry', async ({ page }) => {

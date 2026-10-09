@@ -23,14 +23,13 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
-import java.util.Base64;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static com.ledgerx.testsupport.LedgerTestSupport.openReadyLedger;
 
 class RecordsHttpServerTest {
-    private static final String TOKEN = Base64.getUrlEncoder().withoutPadding().encodeToString(new byte[32]);
     private static final String ACCOUNT = "f3a0c2ec-6b64-48c7-9f7f-0b604e4d8901";
     private static final String CATEGORY = "c4b7e8f1-3c2d-4e5f-8a9b-0c1d2e3f4a5b";
     private static final String RECORD = "d4b7e8f1-3c2d-4e5f-8a9b-0c1d2e3f4a5b";
@@ -39,6 +38,7 @@ class RecordsHttpServerTest {
     private static final ObjectMapper JSON = new ObjectMapper();
     private static final HttpClient CLIENT = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(2)).build();
     private LedgerHttpServer server;
+    private BrowserTestSession session;
 
     @AfterEach
     void stop() { if (server != null) server.stop(Duration.ofSeconds(2)); }
@@ -48,10 +48,10 @@ class RecordsHttpServerTest {
         Path web = temp.resolve("web");
         Files.createDirectories(web);
         Files.writeString(web.resolve("index.html"), "ok", StandardCharsets.UTF_8);
-        ProfileApplicationService service = ProfileApplicationService.open(temp.resolve("data"), "test", CLOCK);
+        ProfileApplicationService service = openReadyLedger(temp.resolve("data"), "test", CLOCK);
         service.createCategory(new CategoryPatch(CATEGORY, "HTTP测试", null),
                 new CategoryMutation("20000000-0000-4000-8000-000000000001", "POST", "/api/v1/categories", "a".repeat(64)));
-        server = new LedgerHttpServer(TOKEN, new InetSocketAddress("127.0.0.1", 0),
+        server = new LedgerHttpServer(new InetSocketAddress("127.0.0.1", 0),
                 StaticResourceManifest.fromDirectory(web), service, service, service, service, service, service,
                 new PrintStream(new ByteArrayOutputStream()), 2, 2);
         server.start();
@@ -112,9 +112,9 @@ class RecordsHttpServerTest {
 
     private HttpResponse<String> send(String method, String path, String body, String key, String suffix) throws Exception {
         HttpRequest.Builder builder = HttpRequest.newBuilder(URI.create(server.origin() + path))
-                .header("Authorization", "Bearer " + TOKEN)
-                .header("X-Request-Id", "00000000-0000-4000-8000-" + suffix + "00000000000")
-                .header("Origin", server.origin());
+                .header("X-Request-Id", "00000000-0000-4000-8000-" + suffix + "00000000000");
+        if (session == null) session = new BrowserTestSession(server.origin());
+        session.apply(builder);
         if (key != null) builder.header("Idempotency-Key", "30000000-0000-4000-8000-" + key.substring(key.length()-1) + "00000000000");
         if (suffix != null && !"0".equals(suffix)) builder.header("If-Match", "\"" + ("2".equals(suffix) ? "0" : "1") + "\"");
         if (body == null) builder.method(method, HttpRequest.BodyPublishers.noBody());

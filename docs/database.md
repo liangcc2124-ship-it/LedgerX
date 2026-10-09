@@ -1,11 +1,11 @@
 # LedgerX Java 11 数据库总体设计
 
 - 状态：已接受
-- 日期：2026-09-14
+- 日期：2026-09-23
 - 数据库：SQLite，经 JDBC 访问
 - 边界：`profiles.db` 管用户空间目录；每个用户空间一个 `ledger.db`
-- 说明：前端改为 Vue、桌面壳改为 Electron、传输改为 REST 不改变领域表；基础记账版范围见 [ADR-010](./decisions/ADR-010-basic-ledger-scope.md)
-- 迁移状态：ledger V001–V004 已纳入有序 runner；V004 seed 已由真实 SQLite 测试验证，分类、账户和基础财务记录表已落地
+- 说明：前端为 Vue 本机网页、Java 同源 REST 服务；基础范围见 [ADR-010](./decisions/ADR-010-basic-ledger-scope.md)，指标/公式/总览增量见 [ADR-011](./decisions/ADR-011-enable-metrics-dashboard.md)
+- 迁移状态：ledger V001–V006 已纳入有序 runner；V005 创建指标/公式/总览 schema，V006 完成账本初始化分类与 setup 状态，均由真实 SQLite 测试验证
 
 ## 1. 原则
 
@@ -28,12 +28,12 @@
 ├─ Profiles\<profile-uuid>\ledger.db
 ├─ Imports\（后续旧数据迁移才使用）
 ├─ Snapshots\（后续应用内恢复才使用）
-├─ Backups\（后续应用内备份才使用）
+├─ Backups\<profile-uuid>\<backup-uuid>.ledgerx-backup
 └─ Logs\
 ```
 
 - `profiles.db` 损坏不应导致账本文件被删除；恢复器可扫描合法 profile 目录重建索引。
-- 基础版只在应用完全退出后由用户复制整个 `%LocalAppData%\LedgerX` 目录；恢复也整体替换，避免遗漏 `profiles.db` 或其他 profile。
+- P9-001 支持运行中为当前 profile 创建一致性 `.ledgerx-backup`；恢复仍只支持应用退出后整体替换已由用户另行保存的数据目录。
 - SQLite 的 `-wal`/`-shm` 不是可独立恢复的账本。不得在应用运行中把单个数据库文件称为完整备份。
 
 ## 3. Profile catalog
@@ -124,8 +124,13 @@ profile 创建、切换和归档会跨越 active ledger，不能把幂等结果�
 | `custom_theme_css` | TEXT NULL CHECK length <= 65536 | 仅由后续 theme import/export 写入；仍须做 CSS 安全校验。 |
 | `revision` | INTEGER NOT NULL DEFAULT 0 CHECK >= 0 | settings 的强 ETag 版本。 |
 | `updated_at` | TEXT NOT NULL | V002 初始化或最后成功设置写入的 UTC instant。 |
+| `setup_state` | TEXT NOT NULL DEFAULT `PENDING` CHECK IN (`PENDING`,`REVIEW_REQUIRED`,`COMPLETED`) | V006 账本初始化状态；非完成状态禁止普通业务读写。 |
+| `ledger_start_on` | TEXT NULL | V006 用户确认的 ISO 账本日期；完成时必填，不得由 migration 时间推断。 |
+| `setup_completed_at` | TEXT NULL | V006 完成 UTC instant；未完成时为空。 |
 
 `GET /settings` 将 `safety_buffer_minor` 映射为金额 DTO，绝不直接暴露分单位或数据库列名。每个有效 PATCH 在同一事务中更新该行、`ledger_meta.updated_at`、`ledger_meta.data_revision` 与 `processed_operation`；settings revision 和 data revision 均恰好加一。无实际字段变化的成功 PATCH 只记录 operation，不增加任一 revision。
+
+`V006__ledger_initialization.sql` 为 setup 字段的唯一 owner。setup 状态只经版本化迁移或初始化 application command 更新；初始化命令把 setup、默认账户、settings/data revision 与幂等 operation 放在一个 SQLite transaction。V006 的 Java backfill hook 与 DDL/schema_history 同事务运行；任何领域预检失败都回滚到原 schema。
 
 ### 4.2 分类与账户
 
@@ -146,6 +151,8 @@ profile 创建、切换和归档会跨越 active ledger，不能把幂等结果�
 
 `id` TEXT PK NOT NULL、`name`、`kind`、`balance_side`、`opening_on`、`opening_balance_minor`、`include_in_available_cash`、`is_system`、`archived_at`、审计时间、`revision`。
 
+V006 setup 完成后 `opening_on` 必须不早于 `ledger_setting.ledger_start_on`。账户开户日不得移至任一 ACTIVE 或 TRASHED 的 `PAID_FROM_ACCOUNT` 记录结算日之后；该规则保证历史回收站记录仍可恢复。
+
 约束：
 
 - `kind` 和 `balance_side` 组合合法；负债类不能标记为可用现金。
@@ -162,13 +169,14 @@ profile 创建、切换和归档会跨越 active ledger，不能把幂等结果�
 
 - Seed 决策见 [ADR-009](./decisions/ADR-009-core-catalog-seed.md)。精确 ID、名称、父子关系、排序、可用记录类型、默认确认方式和推荐折旧方式由 [核心分类与账户 seed 契约](./contracts/core-catalog-v1.md) 唯一规定；实现不得从显示名称重新生成 ID，也不得自行增加、删除或翻译 seed。
 - V004 对每个 V003 ledger 只执行一次。它插入 71 个系统分类、其适用类型关联，以及一个固定 ID 的系统账户“现金储备”；已成功 V004 的库重开时不重写任何 seed，也不覆盖用户后来允许修改的系统账户字段。
-- 系统账户的 opening_on 是 V004 在执行机器本地日期写入的日期，opening_balance_minor 为 0，kind 为 CASH、balance_side 为 ASSET、include_in_available_cash 为 1、revision 为 0。分类与账户的 created_at/updated_at 都是 V004 执行时的 UTC instant。
+- 系统账户的 opening_on 是 V004 在执行机器本地日期写入的日期，opening_balance_minor 为 0，kind 为 CASH、balance_side 为 ASSET、include_in_available_cash 为 1、revision 为 0。分类与账户的 created_at/updated_at 都是 V004 执行时的 UTC instant。V004 日期仅作为历史兼容值；V006 在新 ledger 上要求用户明确设置账本起始日与默认账户开户日。
+- V004 的 opening_on 只是历史兼容 seed；V006 对新 profile 建立 `PENDING` setup 状态，对安全可迁移的既有业务事实设置明确 `ledger_start_on`。未经用户确认的系统安装日不得作为新账本日期。
 - 这是一项 schema seed，不是用户 mutation：不写 processed_operation，不递增已有 ledger_meta.data_revision，也不改 V001–V003 的 checksum。启动期间不存在可与迁移并发的 renderer 请求；迁移完成后的首次 API 读取以现有 dataRevision 为准。
 - 基础版不导入 JSON。若以后恢复旧数据迁移，导入不得复用 V004 覆盖源分类/账户，且必须先重新固定兼容和映射契约。
 
 ### 4.3 财务记录、归集与分摊
 
-基础记账版只公开写入 `finance_record`，且只允许 `INCOME`、`FIXED_COST`、`VARIABLE_COST`。每条记录的 `settlement_mode` 固定为 `PAID_FROM_ACCOUNT`，`category_id`、`account_id`、`settlement_on` 均不能为空。application 同时把 `income_source` 写为 NULL、两个布尔扩展写为 0；`record_metric_assignment`、`direct_metric_entry`、`direct_metric_assignment`、`allocation_plan`、`fixed_asset` 和后续指标/报表表保持为空。数据库保留较宽的 CHECK 和高级表用于避免逆向迁移，但这不表示对应 API 已启用。
+基础记录接口只公开写入 `finance_record`，且只允许 `INCOME`、`FIXED_COST`、`VARIABLE_COST`。每条记录的 `settlement_mode` 固定为 `PAID_FROM_ACCOUNT`，`category_id`、`account_id`、`settlement_on` 均不能为空。application 同时把 `income_source` 写为 NULL、两个布尔扩展写为 0；`record_metric_assignment`、`direct_metric_entry`、`direct_metric_assignment`、`allocation_plan`、`fixed_asset` 和预警/报表表保持为空。指标迭代可以只读这些基础事实并写自身 definition/formula/layout 表，但仍不得向记录写入高级关联。
 
 #### `finance_record`
 
@@ -265,78 +273,145 @@ profile 创建、切换和归档会跨越 active ledger，不能把幂等结果�
 
 ### 4.5 指标与公式
 
-本节是保留的数据设计，基础记账版不创建、不读取指标/公式，也不暴露相关 capability。
+本节按 [ADR-011](./decisions/ADR-011-enable-metrics-dashboard.md) 落地为 ledger V005 schema。实现后续变化必须新增前向 migration，不能修改旧 migration。`record_metric_assignment`、`direct_metric_entry` 与 `direct_metric_assignment` 仍保持未启用和空表状态。
 
 #### `formula_definition`
 
-`id` PK、`scope`、`result_type`、`is_template`、`archived_at`、`created_at`。
+| 列 | 类型/约束 | 说明 |
+| --- | --- | --- |
+| `id` | TEXT PK NOT NULL | UUID；不使用显示名称作标识 |
+| `scope` | TEXT NOT NULL CHECK = `METRIC` | 首版只启用指标公式 |
+| `result_type` | TEXT NOT NULL CHECK IN (`CURRENCY`,`PERCENT`,`NUMBER`,`INTEGER`) | 必须与所属 metric 显示格式兼容 |
+| `is_template` | INTEGER NOT NULL DEFAULT 0 CHECK 0/1 | 首版可 seed 模板但不做运行时继承 |
+| `archived_at` | TEXT NULL | 被当前 metric 引用时不得归档 |
+| `created_at` | TEXT NOT NULL | UTC instant |
 
 #### `formula_version`
 
-`id` PK、`formula_id` FK、`version`、`ast_json`、`tokens_json`、`effective_from`、`created_at`，UNIQUE(`formula_id`,`version`)。
+| 列 | 类型/约束 | 说明 |
+| --- | --- | --- |
+| `id` | TEXT PK NOT NULL | UUID |
+| `formula_id` | TEXT NOT NULL FK→formula_definition ON DELETE RESTRICT | 所属定义 |
+| `version` | INTEGER NOT NULL CHECK >=1 | 每个 definition 单调递增 |
+| `ast_json` | TEXT NOT NULL | 规范 AST，计算唯一权威来源 |
+| `tokens_json` | TEXT NOT NULL | 用稳定引用重建中文编辑界面；显示 label 不是权威 |
+| `created_at` | TEXT NOT NULL | 版本生效/保存时间，仅作审计；历史查询仍使用当前版本重算 |
 
-AST 作为原子 JSON 保存，因为表达式树总是整体读取/验证/替换，拆成节点表不会增加有效约束，只会增加 join。读取时必须按 JSON schema/白名单节点验证，限制深度 32、节点 256。
+UNIQUE(`formula_id`,`version`)。版本行不可更新；修正公式只能新增版本。
+
+AST 作为原子 JSON 保存，因为表达式树总是整体读取/验证/替换，拆成节点表不会增加有效约束，只会增加 join。每次写入和读取都必须按版本化 JSON schema 与白名单重新验证，限制深度 32、节点 256、UTF-8 JSON 大小 64 KiB。规范节点仅包含 constant、reference、`ADD/SUBTRACT/MULTIPLY/DIVIDE/NEGATE` 和 `MIN/MAX/AVG/ROUND/ABS/CLAMP/SAFE_DIVIDE`；不存在动态函数名、脚本或 SQL。
+
+AST 根对象固定携带 `schemaVersion:1` 和单一 `root` 节点。未来只能以新 schemaVersion 增量扩展；读取未知版本必须报告不可兼容/恢复诊断，不能猜测解释。
 
 #### `formula_dependency`
 
-`formula_version_id` FK、`dependency_kind`、`dependency_key`、`referenced_metric_id` 可空 FK，复合唯一。它是保存公式时由已验证 AST 生成的可查询索引，不接受前端直接写入。
+| 列 | 类型/约束 | 说明 |
+| --- | --- | --- |
+| `formula_version_id` | TEXT NOT NULL FK→formula_version ON DELETE CASCADE | 不可变版本 |
+| `dependency_kind` | TEXT NOT NULL CHECK IN (`METRIC`,`CATEGORY_INCOME`,`CATEGORY_EXPENSE`,`ACCOUNT_BALANCE`,`TIME`) | 引用种类 |
+| `dependency_key` | TEXT NOT NULL | 规范 metric ID、category/account UUID 或时间变量键 |
+| `referenced_metric_id` | TEXT NULL FK→metric_definition ON DELETE RESTRICT | kind=METRIC 时必填，否则 NULL |
+| `referenced_category_id` | TEXT NULL FK→category ON DELETE RESTRICT | category kind 时必填，否则 NULL |
+| `referenced_account_id` | TEXT NULL FK→financial_account ON DELETE RESTRICT | kind=ACCOUNT_BALANCE 时必填，否则 NULL |
+
+主键为 (`formula_version_id`,`dependency_kind`,`dependency_key`)。三种 referenced FK 的互斥与 kind 对应由 CHECK（SQLite 能表达的部分）和 Java 共同校验。dependency 是保存 AST 时由 Java 抽取的索引，不接受前端直接写入；必须与 AST 逐项一致。
 
 #### `metric_definition`
 
-`id` TEXT PK（系统稳定 ID 或 `custom-<uuid>`）、`name`、`description`、`display_format`、`precision`、`current_formula_version_id` FK、`template_id`、`template_version`、`period_behavior`、`accepts_direct_record_assignment`、`is_system`、`enabled`、`archived_at`、审计/版本列。
+| 列 | 类型/约束 | 说明 |
+| --- | --- | --- |
+| `id` | TEXT PK NOT NULL | 系统稳定 ID 或 `custom-<uuid>` |
+| `name` | TEXT NOT NULL CHECK trim length 1–100 | 活动名称不区分大小写唯一，且不得与系统指标同名 |
+| `description` | TEXT NOT NULL DEFAULT '' CHECK length<=500 | 中文说明 |
+| `display_format` | TEXT NOT NULL CHECK IN (`CURRENCY`,`PERCENT`,`NUMBER`,`INTEGER`) | API 原值仍为 decimal string |
+| `precision` | INTEGER NOT NULL CHECK BETWEEN 0 AND 8 | CURRENCY 首版固定 2；INTEGER 固定 0 |
+| `period_behavior` | TEXT NOT NULL CHECK IN (`PERIOD`,`AS_OF`,`MIXED`) | UI 解释时间语义，不改变引用自身口径 |
+| `current_formula_version_id` | TEXT NULL FK→formula_version ON DELETE RESTRICT | 自定义指标必填；系统代码指标可为空 |
+| `is_system` | INTEGER NOT NULL CHECK 0/1 | 系统指标只由 seed 管理 |
+| `archived_at` | TEXT NULL | 系统指标永不归档 |
+| `created_at`,`updated_at` | TEXT NOT NULL | UTC instant |
+| `revision` | INTEGER NOT NULL DEFAULT 0 CHECK >=0 | 乐观并发 |
 
 约束：
 
 - `precision BETWEEN 0 AND 8`
-- 当前公式 scope 必须为 METRIC，由领域层校验
+- 当前公式必须属于该自定义指标的 formula definition、scope=METRIC 且 result type 兼容，由领域层校验
 - 系统指标不能物理删除
-- 被活动公式/预警引用的指标不能归档或删除
+- 自定义指标首版只归档不物理删除；被活动指标公式引用时不能归档
+- 系统指标和默认可见性由 migration 确定性 seed；不得在每次启动时按显示名称 upsert
 
 #### `metric_visibility`
 
-每个指标一行：`metric_id` PK/FK、`hidden`、`dashboard_enabled`。把当前 `HiddenMetrics`/`EnabledMetrics` 集合显式化。
+每个指标一行：`metric_id` PK/FK ON DELETE CASCADE、`hidden` INTEGER CHECK 0/1、`dashboard_enabled` INTEGER CHECK 0/1、`revision` INTEGER CHECK >=0、`updated_at`。`hidden` 只遮蔽展示金额，不改变计算、比较或依赖；`dashboard_enabled` 只控制总览是否返回该卡片。默认启用：收入、总支出、净收支、储蓄率、固定支出、弹性支出、可用现金、净资产。
+
+系统指标稳定 ID 与语义：
+
+| ID | 名称 | 行为 | 公式/口径 |
+| --- | --- | --- | --- |
+| `income` | 收入 | PERIOD | 期间内 ACTIVE `INCOME`，按 occurred_on 合计 |
+| `fixed-expense` | 固定支出 | PERIOD | 期间内 ACTIVE `FIXED_COST`，按 occurred_on 合计 |
+| `variable-expense` | 弹性支出 | PERIOD | 期间内 ACTIVE `VARIABLE_COST`，按 occurred_on 合计 |
+| `total-expense` | 总支出 | PERIOD | fixed-expense + variable-expense |
+| `net-result` | 净收支 | PERIOD | income - total-expense |
+| `savings-rate` | 储蓄率 | PERIOD | SAFE_DIVIDE(net-result,income) × 100；income=0 时不可计算 |
+| `cash-inflow` | 现金流入 | PERIOD | settlement_on 在期间内的 ACTIVE INCOME 合计 |
+| `cash-outflow` | 现金流出 | PERIOD | settlement_on 在期间内的 ACTIVE 支出合计 |
+| `net-cash-flow` | 净现金流 | PERIOD | cash-inflow - cash-outflow |
+| `available-cash` | 可用现金 | AS_OF | ACTIVE 资产账户中 include_in_available_cash=1 的 asOf 余额合计 |
+| `total-assets` | 资产合计 | AS_OF | 所有资产账户截至 asOf 的有符号余额合计，包含已归档账户 |
+| `total-liabilities` | 负债合计 | AS_OF | 所有负债账户截至 asOf 的有符号余额合计，包含已归档账户 |
+| `net-assets` | 净资产 | AS_OF | total-assets - total-liabilities |
+| `average-daily-expense` | 日均支出 | PERIOD | total-expense / 期间已过且纳入统计的自然日数 |
+| `fixed-expense-ratio` | 固定支出占比 | PERIOD | SAFE_DIVIDE(fixed-expense,total-expense) × 100 |
+| `variable-expense-ratio` | 弹性支出占比 | PERIOD | SAFE_DIVIDE(variable-expense,total-expense) × 100 |
+| `transaction-count` | 记录笔数 | PERIOD | 期间内三类 ACTIVE 记录数，按 occurred_on |
+
+资产/负债总计包含已归档账户，避免归档这一目录操作凭空改变历史净资产；正常关闭账户应通过其真实交易使余额归零。已保存公式也可继续读取被引用归档账户的历史/asOf 余额，但新公式选择器不提供归档账户。
 
 索引：
 
 - `formula_version(formula_id, version DESC)`
-- `formula_dependency(referenced_metric_id)`
+- `formula_dependency(referenced_metric_id)`、`formula_dependency(referenced_category_id)`、`formula_dependency(referenced_account_id)`
 - `metric_definition(archived_at, enabled, name COLLATE NOCASE)`
-- 活动自定义指标名称可选唯一约束；系统和自定义是否允许同名由中级模块规格确认
+- 活动自定义指标名称使用 partial unique index（`name COLLATE NOCASE WHERE archived_at IS NULL`）；领域层同时拒绝与系统显示名同名
 
 ### 4.6 仪表盘、预警和事件
 
-本节是保留的数据设计，基础记账版不创建、不读取仪表盘、预警或事件，也不暴露相关 capability。
+本轮只启用 dashboard layout；预警和事件继续延后。
 
 #### `dashboard_layout`
 
-`id` PK、`breakpoint`、`version`、`updated_at`，UNIQUE(`breakpoint`)。
+`id` TEXT PK、`view_key` TEXT NOT NULL CHECK=`financial-overview`、`breakpoint` TEXT NOT NULL CHECK=`desktop`、`revision` INTEGER NOT NULL DEFAULT 0 CHECK>=0、`updated_at` TEXT NOT NULL，UNIQUE(`view_key`,`breakpoint`)。每个 profile 数据库只有一份桌面总览布局，日/周/月/年共享。
 
 #### `dashboard_layout_item`
 
-`layout_id` FK、`widget_id`、`x/y/w/h/min_w/min_h/max_w/max_h`，复合 PK。坐标和尺寸均非负，min ≤ current ≤ max。
+`layout_id` TEXT NOT NULL FK ON DELETE CASCADE、`widget_id` TEXT NOT NULL、`x/y/w/h/min_w/min_h/max_w/max_h` INTEGER NOT NULL，主键 (`layout_id`,`widget_id`)。首版 widget 只能是 `metric:<active metric id>`；不在本轮加入记录列表、报告或预警 widget。
+
+- 12 列：`0<=x<=11`、`1<=w<=12`、`x+w<=12`；`y>=0`、`h>=1`。
+- `min_w<=w<=max_w<=12`、`min_h<=h<=max_h`；指标卡默认最小 `min_w=3,min_h=2`，具体行高由中级 UI 规格固定。
+- Java 在保存前验证 widget 唯一、存在、未归档、dashboard enabled、无矩形重叠且总 item 数不超过 100。数据库约束负责单行范围，跨行不重叠由 application 负责。
+- layout mutation 原子替换全部 items；空布局不合法。“恢复默认”删除/替换为由系统指标稳定 ID 生成的确定布局，不能依赖当前 DOM 顺序。
 
 #### `warning_rule`
 
-`id` PK、名称/说明、enabled、主 metric、operator、threshold decimal text、unit、period、comparison mode/window、consecutive periods、severity、repeat policy、cooldown、effective dates、notification method、show amount、审计/版本。
+后续可选，当前 migration 不创建：`id` PK、名称/说明、enabled、主 metric、operator、threshold decimal text、unit、period、comparison mode/window、consecutive periods、severity、repeat policy、cooldown、effective dates、notification method、show amount、审计/版本。
 
 #### `warning_condition`
 
-`id` PK、`rule_id` FK `ON DELETE CASCADE`、position、metric FK、operator、threshold、comparison mode/window；UNIQUE(rule_id, position)。
+后续可选，当前 migration 不创建：`id` PK、`rule_id` FK `ON DELETE CASCADE`、position、metric FK、operator、threshold、comparison mode/window；UNIQUE(rule_id, position)。
 
 #### `warning_event`
 
-`id` PK、`rule_id` FK `ON DELETE RESTRICT`、status、measured decimal text、threshold decimal text、period start/end、triggered/last evaluated/resolved/snoozed times、explanation。
+后续可选，当前 migration 不创建：`id` PK、`rule_id` FK `ON DELETE RESTRICT`、status、measured decimal text、threshold decimal text、period start/end、triggered/last evaluated/resolved/snoozed times、explanation。
 
 #### `warning_event_evidence`
 
-`event_id` FK、`record_id` FK，复合 PK。永久清理仍被事件引用的记录时，先按产品规则删除事件或保留不可识别 evidence ID；不得靠级联悄悄改变预警历史。
+后续可选，当前 migration 不创建：`event_id` FK、`record_id` FK，复合 PK。
 
 索引：
 
-- `warning_rule(enabled, effective_from, effective_to)`
-- `warning_condition(metric_id, rule_id)`
-- `warning_event(rule_id, status, triggered_at DESC)`
-- `warning_event(status, snoozed_until)`
+- 本轮只新增 `dashboard_layout(view_key,breakpoint)` 唯一索引和 `dashboard_layout_item(layout_id,widget_id)` 主键索引。
+- warning 相关索引随未来 warning migration 创建，不在本轮创建空表或索引。
 
 ### 4.7 幂等、迁移问题与诊断
 
@@ -385,16 +460,16 @@ profile (catalog)
 
 - 基础记录用例只拥有 `finance_record` 的三类记录及其余额影响；不调用高级表。
 - 高级记录用例以后启用时，才拥有分摊计划、购置固定资产和指标关联的一致性。
-- 指标模块拥有公式版本、依赖和指标定义；记录模块只能引用公开的指标 ID。
+- 指标模块拥有公式版本、依赖和指标定义；本轮记录模块不写任何指标 assignment，指标查询只读记录公开事实。
 - 预警模块拥有规则/条件/事件，不拥有财务记录。
-- 仪表盘只保存 widget 标识和布局，不拥有指标。
+- 仪表盘只保存 widget 标识和布局，不拥有指标或派生值；四种时间粒度共享布局。
 - 备份模块后续启用时拥有文件级快照和 manifest，不改写领域事实。
 
 ## 6. 删除、归档与保留
 
 - 基础版 `finance_record` 只做软删除；恢复清空 `deleted_at`，不提供永久删除。`direct_metric_entry` 未启用。
 - `category`、`financial_account`：被引用后只归档；合并分类在单事务更新引用并保留源分类为归档。
-- `metric_definition`：被公式、预警或记录归集引用时禁止永久删除；可先归档并修复依赖。
+- `metric_definition`：系统指标永不归档；自定义指标首版不物理删除，被活动公式引用时禁止归档。
 - `formula_version`：不可变，不物理删除仍被指标/资产/分摊引用的版本。
 - `warning_event`：规则删除默认应连同事件删除还是保留历史，当前 C# 会删除；目标默认保持现状，但中级规格需明确。
 - 自动备份、保护快照和原始迁移 JSON 保留规则只在后续启用相应模块时生效。
@@ -407,12 +482,13 @@ profile (catalog)
 - 基础版删除/恢复记录 + revision/dataRevision/operation；余额由查询投影，不另写累计表。
 - 高级版以后启用时，新建/编辑记录与分摊、固定资产、指标关联必须同事务。
 - 保存公式版本 + 依赖 + 指标当前版本切换。
+- 保存 dashboard layout + 全部 layout item 原子替换。
 - 合并分类及所有记录引用更新。
 - 写业务事实 + `ledger_meta.data_revision` + `processed_operation`。
 - 写 settings + `ledger_setting.revision` + `ledger_meta.data_revision` + `processed_operation`。
 - profile 创建/切换/归档 + `catalog_setting.revision` + `catalog_processed_operation`。
 
-基础版没有运行中的文件恢复事务。以后启用应用内备份/恢复时采用“临时文件→验证→原子重命名/切换”的补偿流程，不引入 XA。
+当前没有运行中的文件恢复事务。P9-001 备份采用“同目录 staging→完整验证→原子发布”的补偿流程；以后若启用恢复，必须另行定义验证、原子切换与回切，不引入 XA。
 
 ## 8. 迁移原则与步骤
 
@@ -421,7 +497,7 @@ profile (catalog)
 1. 迁移资源命名 `V001__bootstrap.sql`、`V002__ledger_settings.sql` 等，版本严格递增，文件 SHA-256 写入 `schema_history`。
 2. 启动时若数据库版本高于应用支持版本，拒绝写入并给出升级提示。
 3. 结构变更优先 expand/读兼容/backfill/验证/contract；SQLite 不便直接修改的表采用新表复制，并在单事务核对行数。
-4. 迁移 runner 必须依赖 SQLite 事务保证失败回滚；涉及已有业务数据的破坏性重建才要求先创建一致性保护副本。V004 只做固定 seed，不引入应用内备份依赖。
+4. 迁移 runner 必须依赖 SQLite 事务保证失败回滚；Java migration hook 在执行对应 SQL 后、写 schema_history 前运行，并与 SQL 同事务。涉及已有业务数据的破坏性重建才要求先创建一致性保护副本。V004 只做固定 seed，不引入应用内备份依赖。
 5. 重复启动不得重复 seed、重复回填或修改历史业务事实。
 
 ### 8.2 旧 JSON 导入（后续可选，不属于基础版）
@@ -437,18 +513,20 @@ profile (catalog)
 9. 全部可导入 profile 核对后才写 `profiles.db` 的活动指针；单个 profile 失败不能污染其他空间。
 10. 成功后写 manifest 并原子移动到 profile 活动目录；原 `profiles.json`/`ledger.json` 改为只读保留或由用户显式归档，不删除。
 
-### 8.3 备份兼容（后续可选，不属于基础版）
+### 8.3 本机备份格式 3
 
-- Java 版直接读取当前 v3.1 schema 4 裸账本 JSON 和备份 envelope 格式 2。
-- schema 2/3 或备份格式 1 明确拒绝，并提示先用现有 C# v3.1 打开和升级后再迁移。
-- 新备份格式建议为 3：manifest + 一致性 `ledger.db` + SHA-256；不承诺旧 C# 版能读取新格式。
-- 新版恢复任何不在明确兼容清单中的格式只允许读取安全元数据或直接拒绝，不允许猜测导入。
-- 回滚到 C# 版只能继续使用迁移前 JSON；Java 运行期间新增数据不会自动反写 JSON，避免双写分叉。
+- P9-001 只创建和校验 format 3：恰含 `manifest.json` 与 SQLite online backup 生成的 `ledger.db`，并以 SHA-256、`integrity_check`、`foreign_key_check` 和有限计数验证。
+- manifest 记录 backup/profile ID、schema/application version、UTC createdAt、dataRevision、记录/分类/账户/指标计数和 `encrypted=false`。
+- 文件先在 `Backups/<profile-id>/` 同卷 staging 完整生成并重开校验，关闭后用原子移动发布；不建立备份数据库表，也不改变 ledger schema。
+- 本轮 reader 只接受 format 3，未知 format/schema 明确拒绝；旧 JSON、legacy envelope 与任何恢复/导入兼容不属于 P9-001。
+- format 3 不承诺旧 C# 版可读取。回滚到 C# 版只能继续使用迁移前 JSON；Java 新增数据不会反写 JSON。
 
 ## 9. 容量与性能说明
 
-- 当前基础验收按单 profile 20,000 条记录；该规模远低于 SQLite 能力边界。
+- 当前验收按单 profile 20,000 条记录、最多 50 个启用指标和 100 个布局 item；该规模远低于 SQLite 能力边界。
 - 首先依赖正确组合索引和有界查询；列表默认 50，最大 200。
 - 记录和账户余额查询只取所需日期、类型和列；避免加载整个数据库为一个状态对象。
+- 总览查询应以固定数量的分组聚合和一次账户投影为目标，避免按卡片或依赖节点产生 N+1 SQL；中级规格必须用 `EXPLAIN QUERY PLAN` 固定主要日期/type/account 索引使用。
+- 首版不建立指标结果、趋势或上一期比较缓存表。只有真实 P95 超标且确认瓶颈不在 SQL/序列化/DOM 后，才设计带 profile、dataRevision、formulaVersion 和 range key 的可失效缓存。
 - WAL 是否启用由真实备份、杀进程和 Windows 文件系统测试决定。单写者应用默认可先使用 SQLite 默认 journal 模式；没有并发读写证据时不为吞吐开启 WAL。
 - 数据库连接设置、索引使用和慢查询在集成测试用 `EXPLAIN QUERY PLAN` 抽查，不为所有查询建立重复索引。

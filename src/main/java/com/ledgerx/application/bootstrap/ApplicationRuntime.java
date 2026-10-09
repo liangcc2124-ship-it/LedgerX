@@ -28,9 +28,32 @@ import com.ledgerx.application.settings.SettingsMutation;
 import com.ledgerx.application.settings.SettingsPatch;
 import com.ledgerx.application.system.SystemStatus;
 import com.ledgerx.application.system.SystemStatusProvider;
+import com.ledgerx.application.metrics.DashboardApi;
+import com.ledgerx.application.metrics.DashboardApiResult;
+import com.ledgerx.application.metrics.DashboardException;
+import com.ledgerx.application.metrics.DashboardLayoutDraft;
+import com.ledgerx.application.metrics.DashboardMutation;
+import com.ledgerx.application.metrics.MetricApiResult;
+import com.ledgerx.application.metrics.MetricDraft;
+import com.ledgerx.application.metrics.MetricException;
+import com.ledgerx.application.metrics.FormulaDraftRequest;
+import com.ledgerx.application.metrics.MetricGranularity;
+import com.ledgerx.application.metrics.MetricMutation;
+import com.ledgerx.application.metrics.MetricListQuery;
+import com.ledgerx.application.metrics.MetricsApi;
+import com.ledgerx.application.ledgerinitialization.LedgerInitializationApi;
+import com.ledgerx.application.ledgerinitialization.LedgerInitializationApiResult;
+import com.ledgerx.application.ledgerinitialization.LedgerInitializationDraft;
+import com.ledgerx.application.ledgerinitialization.LedgerInitializationException;
+import com.ledgerx.application.ledgerinitialization.LedgerInitializationMutation;
+import com.ledgerx.application.backup.BackupApi;
+import com.ledgerx.application.backup.BackupApiResult;
+import com.ledgerx.application.backup.BackupDownload;
+import com.ledgerx.application.backup.BackupException;
 
 /** A single runtime facade so status and profile REST routes share one active-profile context. */
-public final class ApplicationRuntime implements SystemStatusProvider, ProfileApi, SettingsApi, CategoryApi, AccountApi, RecordApi {
+public final class ApplicationRuntime implements SystemStatusProvider, ProfileApi, SettingsApi, CategoryApi, AccountApi,
+        RecordApi, MetricsApi, DashboardApi, LedgerInitializationApi, BackupApi {
     private final SystemStatusProvider statusProvider;
     private final ProfileApplicationService profiles;
 
@@ -156,6 +179,122 @@ public final class ApplicationRuntime implements SystemStatusProvider, ProfileAp
     @Override
     public RecordApiResult restoreRecord(String id, long expectedRevision, RecordMutation mutation) throws RecordException { return requireRecords().restoreRecord(id, expectedRevision, mutation); }
 
+    @Override
+    public MetricApiResult listMetrics(MetricListQuery query) throws MetricException {
+        return requireMetrics().listMetrics(query);
+    }
+
+    @Override
+    public MetricApiResult getMetric(String id, boolean includeArchived) throws MetricException {
+        return requireMetrics().getMetric(id, includeArchived);
+    }
+
+    @Override
+    public MetricApiResult createMetric(MetricDraft draft, MetricMutation mutation) throws MetricException {
+        return requireMetrics().createMetric(draft, mutation);
+    }
+
+    @Override
+    public MetricApiResult updateMetric(String id, long expectedRevision, MetricDraft draft, MetricMutation mutation)
+            throws MetricException {
+        return requireMetrics().updateMetric(id, expectedRevision, draft, mutation);
+    }
+
+    @Override
+    public MetricApiResult updateSystemVisibility(String id, long expectedRevision, boolean hidden,
+            boolean dashboardEnabled, MetricMutation mutation) throws MetricException {
+        return requireMetrics().updateSystemVisibility(id, expectedRevision, hidden, dashboardEnabled, mutation);
+    }
+
+    @Override
+    public MetricApiResult archiveMetric(String id, long expectedRevision, MetricMutation mutation)
+            throws MetricException {
+        return requireMetrics().archiveMetric(id, expectedRevision, mutation);
+    }
+
+    @Override
+    public MetricApiResult validateFormula(FormulaDraftRequest draft) throws MetricException {
+        return requireMetrics().validateFormula(draft);
+    }
+
+    @Override
+    public MetricApiResult previewFormula(FormulaDraftRequest draft) throws MetricException {
+        return requireMetrics().previewFormula(draft);
+    }
+
+    @Override
+    public MetricApiResult listFormulaVersions(String formulaId, int limit, String cursor)
+            throws MetricException {
+        return requireMetrics().listFormulaVersions(formulaId, limit, cursor);
+    }
+
+    @Override
+    public DashboardApiResult readDashboard(MetricGranularity granularity, LocalDate anchor)
+            throws DashboardException {
+        return requireDashboard().readDashboard(granularity, anchor);
+    }
+
+    @Override
+    public DashboardApiResult readLayout() throws DashboardException {
+        return requireDashboard().readLayout();
+    }
+
+    @Override
+    public DashboardApiResult replaceLayout(long expectedRevision, DashboardLayoutDraft draft,
+            DashboardMutation mutation) throws DashboardException {
+        return requireDashboard().replaceLayout(expectedRevision, draft, mutation);
+    }
+
+    @Override
+    public DashboardApiResult resetLayout(long expectedRevision, DashboardMutation mutation) throws DashboardException {
+        return requireDashboard().resetLayout(expectedRevision, mutation);
+    }
+
+    @Override
+    public LedgerInitializationApiResult readInitialization() throws LedgerInitializationException {
+        return requireInitialization().readInitialization();
+    }
+
+    @Override
+    public LedgerInitializationApiResult initializeLedger(LedgerInitializationDraft draft,
+            LedgerInitializationMutation mutation) throws LedgerInitializationException {
+        return requireInitialization().initializeLedger(draft, mutation);
+    }
+
+    @Override
+    public BackupApiResult createBackup(String idempotencyKey) throws BackupException {
+        return requireBackups().createBackup(idempotencyKey);
+    }
+
+    @Override
+    public BackupApiResult listBackups(int limit, String cursor) throws BackupException {
+        return requireBackups().listBackups(limit, cursor);
+    }
+
+    @Override
+    public BackupApiResult verifyBackup(String id) throws BackupException {
+        return requireBackups().verifyBackup(id);
+    }
+
+    @Override
+    public BackupDownload openBackupDownload(String id) throws BackupException {
+        return requireBackups().openBackupDownload(id);
+    }
+
+    private ProfileApplicationService requireInitialization() throws LedgerInitializationException {
+        if (profiles == null) {
+            throw new LedgerInitializationException(423, "RECOVERY_REQUIRED", "数据恢复完成前不能初始化账本。");
+        }
+        return profiles;
+    }
+
+    private ProfileApplicationService requireBackups() throws BackupException {
+        if (profiles == null) {
+            throw new BackupException(423, "RECOVERY_REQUIRED", "数据恢复完成前不能操作备份。");
+        }
+        return profiles;
+    }
+
     private ProfileApplicationService requireProfiles() throws ProfileException {
         if (profiles == null) {
             throw new ProfileException(423, "RECOVERY_REQUIRED", "数据恢复完成前不能操作用户空间。");
@@ -184,6 +323,16 @@ public final class ApplicationRuntime implements SystemStatusProvider, ProfileAp
 
     private ProfileApplicationService requireRecords() throws RecordException {
         if (profiles == null) throw new RecordException(423, "RECOVERY_REQUIRED", "数据恢复完成前不能操作记录。");
+        return profiles;
+    }
+
+    private ProfileApplicationService requireMetrics() throws MetricException {
+        if (profiles == null) throw new MetricException(423, "RECOVERY_REQUIRED", "数据恢复完成前不能操作指标。");
+        return profiles;
+    }
+
+    private ProfileApplicationService requireDashboard() throws DashboardException {
+        if (profiles == null) throw new DashboardException(423, "RECOVERY_REQUIRED", "数据恢复完成前不能读取总览。");
         return profiles;
     }
 }

@@ -1,4 +1,17 @@
-# Unreleased — Java 11 前后端分离设计修订
+# Unreleased — 本机网页版方向（2026-09-24）
+
+- 产品目标改为系统浏览器访问 Java 本机服务；保留 Vue 3、Java 11、SQLite，不再使用 Electron/Forge 或桌面壳作为当前版本入口。
+- 新增项目规则、ADR-014 与 P7-004；同步需求、架构、API 与任务路线图，旧 Electron 决策和验证仅作历史依据。
+- P7-004 已实现 Java 同源静态资源、随机端口本机启动、HttpOnly 浏览器会话与 CSRF；Playwright Chromium 以隔离 SQLite 验证创建、刷新、编辑、Java 重启、删除和恢复。
+- P7-003 收敛为本机自用的单条构建与启动路径：Vue 资源嵌入 Java JAR，普通启动不依赖 Node 或 Vite；移除正式发布、SBOM、双缓存和全历史任务门禁。
+- Java 活动服务器移除旧 Bearer 环境令牌认证分支；Vite 开发代理拒绝旧令牌配置，只转发浏览器同源会话。
+- 前端会话 client 现在只接受浏览器会话，所有写入必须带 CSRF；清理恢复页/设置页的可选桌面桥接，并把 Node 单测纳入真正会失败的 `npm test` 门禁。
+- P9-001 新增应用内手动本机备份：基于 SQLite 在线快照生成版本化 `.ledgerx-backup` 文件，经过 SHA-256、完整性与外键检查后原子发布；设置页支持历史分页、复验和下载。文件未加密；恢复、自动备份和自动清理仍待后续按需设计。
+- 本机使用验证记录：前端配置/单元/UI 测试、Java 全量测试及隔离真实浏览器→Java→SQLite 主流程均通过；尚未制作或验证分享包。
+- 修复 Dashboard 中 GridStack 在 Vue Teleport 内容挂载前测量卡片高度导致的控制台错误，并加入回归断言。
+- 新版当前面向个人本机使用，不代表正式发行或分享包；未完成的 P3/P4/P5/P6 增强功能按实际需要排期，遗留 Electron/Forge 仅作历史材料。
+
+# 历史未发布设计记录 — Java 11 前后端分离与 Electron
 
 - 目标前端从 React/TypeScript + JavaFX WebView 规划改为 Vue 3 + HTML/CSS/JavaScript + Electron。
 - Java 11 后端改为只绑定本机的版本化 REST API，Vue 与 Java 可独立开发、构建和测试。

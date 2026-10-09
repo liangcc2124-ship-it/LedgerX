@@ -1,6 +1,6 @@
 # LedgerX v3.1 基础功能迭代构建文档
 
-> **当前旧版构建记录/迁移基线**：本文准确保留 v3.1 WPF/WebView2 + React/TypeScript 的实现和测试证据。下一代目标是 Vue/Electron + Java 11 REST + SQLite；不得把本文旧 bridge 字段用于新接口，见 [api.md](./api.md)。
+> **旧版构建记录/迁移基线**：本文准确保留 v3.1 WPF/WebView2 + React/TypeScript 的实现和测试证据。下一代目标是本机浏览器 Vue + Java 11 REST + SQLite，不再使用 Electron；不得把本文旧 bridge 字段用于新接口，见 [api.md](./api.md)。
 
 ## 0. 文档信息
 

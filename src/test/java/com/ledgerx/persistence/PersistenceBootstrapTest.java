@@ -4,6 +4,7 @@ import com.ledgerx.application.bootstrap.ApplicationBootstrap;
 import com.ledgerx.application.system.SystemStatus;
 import com.ledgerx.application.system.SystemStatusProvider;
 import com.ledgerx.http.BuildMetadata;
+import com.ledgerx.http.BrowserTestSession;
 import com.ledgerx.http.LedgerHttpServer;
 import com.ledgerx.http.StaticResourceManifest;
 import org.junit.jupiter.api.Test;
@@ -28,7 +29,6 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.Arrays;
-import java.util.Base64;
 import java.util.Collections;
 import java.util.UUID;
 
@@ -39,7 +39,6 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class PersistenceBootstrapTest {
-    private static final String TOKEN = Base64.getUrlEncoder().withoutPadding().encodeToString(new byte[32]);
     private static final Clock CLOCK = Clock.fixed(Instant.parse("2026-09-12T08:30:00Z"), ZoneOffset.UTC);
 
     @Test
@@ -52,7 +51,7 @@ class PersistenceBootstrapTest {
         assertTrue(Files.isRegularFile(temp.resolve("profiles.db")));
         assertTrue(Files.isDirectory(profileDirectory));
         assertTrue(Files.isRegularFile(ledger));
-        assertEquals(4, first.getSchemaVersion());
+        assertEquals(6, first.getSchemaVersion());
         assertEquals(0, first.getDataRevision());
         assertEquals(36, first.getProfileId().length());
         assertEquals(first.getProfileId(), first.getProfileId().toLowerCase());
@@ -71,7 +70,7 @@ class PersistenceBootstrapTest {
         assertEquals(first.getProfileId(), reopened.getProfileId());
         assertEquals(1, countRows(temp.resolve("profiles.db"), "profile"));
         assertEquals(1, countRows(temp.resolve("profiles.db"), "catalog_setting"));
-        assertEquals(4, countRows(ledger, "schema_history"));
+        assertEquals(6, countRows(ledger, "schema_history"));
         assertEquals(1, countRows(ledger, "ledger_meta"));
         assertEquals(0, reopened.getDataRevision());
     }
@@ -137,7 +136,7 @@ class PersistenceBootstrapTest {
 
         BootstrapSnapshot upgraded = new ProfileBootstrap(temp, CLOCK).open();
         assertEquals(profileId, upgraded.getProfileId());
-        assertEquals(4, upgraded.getSchemaVersion());
+        assertEquals(6, upgraded.getSchemaVersion());
         assertEquals(0, upgraded.getDataRevision());
         try (Connection connection = new SqliteDatabase(ledger).open();
                 PreparedStatement setting = connection.prepareStatement(
@@ -150,7 +149,7 @@ class PersistenceBootstrapTest {
             assertEquals(300000, result.getLong("safety_buffer_minor"));
             assertEquals(0, result.getLong("revision"));
             assertFalse(result.next());
-            assertEquals(4, countRows(connection, "schema_history"));
+            assertEquals(6, countRows(connection, "schema_history"));
         }
     }
 
@@ -264,7 +263,7 @@ class PersistenceBootstrapTest {
         SystemStatus status = provider.current();
         assertEquals("READY", status.getState());
         assertNotNull(status.getActiveProfileId());
-        assertEquals(4, status.getSchemaVersion());
+        assertEquals(6, status.getSchemaVersion());
         assertEquals(0L, status.getDataRevision());
 
         Path web = temp.resolve("web");
@@ -273,7 +272,6 @@ class PersistenceBootstrapTest {
         Files.writeString(web.resolve("assets/app.js"), "console.log('test');", StandardCharsets.UTF_8);
         ByteArrayOutputStream readiness = new ByteArrayOutputStream();
         LedgerHttpServer server = new LedgerHttpServer(
-                TOKEN,
                 new InetSocketAddress("127.0.0.1", 0),
                 StaticResourceManifest.forDirectory(web,
                         Collections.singletonMap("index.html", "index.html")),
@@ -283,19 +281,17 @@ class PersistenceBootstrapTest {
                 2);
         try {
             server.start();
-            HttpRequest request = HttpRequest.newBuilder()
+            HttpRequest.Builder requestBuilder = HttpRequest.newBuilder()
                     .uri(URI.create(server.origin() + "/api/v1/system/status"))
-                    .header("Authorization", "Bearer " + TOKEN)
                     .header("X-Request-Id", UUID.randomUUID().toString())
-                    .GET()
-                    .build();
+                    .GET();
+            BrowserTestSession.forServer(server).apply(requestBuilder);
             HttpResponse<String> response = HttpClient.newHttpClient().send(
-                    request, HttpResponse.BodyHandlers.ofString());
+                    requestBuilder.build(), HttpResponse.BodyHandlers.ofString());
             assertEquals(200, response.statusCode());
             assertTrue(response.body().contains("\"state\":\"READY\""));
-            assertTrue(response.body().contains("\"schemaVersion\":4"));
+            assertTrue(response.body().contains("\"schemaVersion\":6"));
             assertTrue(response.body().contains("\"dataRevision\":0"));
-            assertFalse(response.body().contains(TOKEN));
             assertFalse(readiness.toString(StandardCharsets.UTF_8).contains(status.getActiveProfileId()));
         } finally {
             server.stop(java.time.Duration.ofSeconds(2));
@@ -374,8 +370,10 @@ class PersistenceBootstrapTest {
     }
 
     private static void assertLedgerShape(Path ledger, String profileId) throws Exception {
-        assertEquals(Arrays.asList("category", "category_record_type", "finance_record",
-                        "financial_account", "ledger_meta", "ledger_setting", "processed_operation",
+        assertEquals(Arrays.asList("category", "category_record_type", "dashboard_layout",
+                        "dashboard_layout_item", "finance_record", "financial_account",
+                        "formula_definition", "formula_dependency", "formula_version", "ledger_meta",
+                        "ledger_setting", "metric_definition", "metric_visibility", "processed_operation",
                         "schema_history"),
                 tableNames(ledger));
         assertEquals(Arrays.asList("idx_category_parent_archived_sort",
@@ -386,10 +384,16 @@ class PersistenceBootstrapTest {
                         "idx_finance_record_settlement_deleted",
                         "idx_finance_record_type_deleted_occurred",
                         "idx_financial_account_archived_name",
+                        "idx_formula_dependency_account",
+                        "idx_formula_dependency_category",
+                        "idx_formula_dependency_metric",
+                        "idx_formula_version_formula_version_desc",
+                        "idx_metric_definition_active_name",
                         "idx_processed_operation_expires_at",
                         "ux_category_active_parent_name",
                         "ux_category_active_top_name",
-                        "ux_financial_account_active_name"),
+                        "ux_financial_account_active_name",
+                        "ux_metric_definition_active_name"),
                 indexNames(ledger));
         try (Connection connection = new SqliteDatabase(ledger).open();
                 PreparedStatement query = connection.prepareStatement(

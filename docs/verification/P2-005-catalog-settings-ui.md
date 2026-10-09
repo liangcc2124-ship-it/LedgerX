@@ -1,7 +1,7 @@
 # P2-005 用户空间与设置真实桌面集成验证记录
 
 - 日期：2026-09-14
-- 任务：[P2-005](../tasks/P2-005-catalog-settings-ui-integration.md)
+- 原任务：P2-005（已完成，任务规格已按当前清理规则删除；后续工作见[当前任务索引](../tasks/README.md)）
 - 结果：PASS（本机 Node 24.19.0 受控权限；真实 Electron sandbox 开启）
 
 ## 验证范围

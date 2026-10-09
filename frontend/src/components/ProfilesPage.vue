@@ -1,6 +1,10 @@
 <script setup>
-import { computed, onMounted, onUnmounted, ref } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 import { ApiClientError, createRequestId, requestApiJson } from '../apiClient.js';
+import AppDialog from './common/AppDialog.vue';
+import { useApiMutation } from '../composables/useApiMutation.js';
+import { useAsyncResource } from '../composables/useAsyncResource.js';
+import { entityStatusLabel } from '../presentationMaps.js';
 
 const emit = defineEmits(['profile-activation-complete']);
 
@@ -9,29 +13,22 @@ const activeProfileId = ref(null);
 const includeArchived = ref(false);
 const nextCursor = ref(null);
 const hasMore = ref(false);
-const readState = ref('loading');
+const profileResource = useAsyncResource(loadProfilesData);
+const readState = profileResource.state;
 const readError = ref('');
 const announcement = ref('');
 const profileName = ref('');
 const nameError = ref('');
-const confirmingArchiveId = ref(null);
+const createDialogOpen = ref(false);
+const archiveTarget = ref(null);
 const mutationState = ref({ kind: 'idle', action: '', message: '' });
 const pendingMutation = ref(null);
 const writesDisabled = ref(false);
 const revisionConflict = ref(false);
 
-let readGeneration = 0;
-let readController = null;
+const apiMutation = useApiMutation();
 
 const sortedProfiles = computed(() => profiles.value);
-
-function statusLabel(status) {
-  return {
-    ACTIVE: '使用中',
-    INACTIVE: '未使用',
-    ARCHIVED: '已归档',
-  }[status] || '未知状态';
-}
 
 function isUuid(value) {
   return typeof value === 'string'
@@ -88,32 +85,30 @@ function operationMessage(action) {
   return action === 'create' ? '创建用户空间' : action === 'activate' ? '切换用户空间' : '归档用户空间';
 }
 
-async function loadProfiles({ append = false } = {}) {
-  const generation = ++readGeneration;
-  if (readController) readController.abort();
-  readController = new AbortController();
-  const controller = readController;
-  let timedOut = false;
-  const timeout = setTimeout(() => {
-    timedOut = true;
-    controller.abort();
-  }, 15000);
-  readState.value = append ? 'loading-more' : 'loading';
-  readError.value = '';
+async function loadProfilesData({ signal, input }) {
+  const append = Boolean(input?.append);
   const params = new URLSearchParams({ includeArchived: String(includeArchived.value), limit: '50' });
-  if (append && nextCursor.value) params.set('cursor', nextCursor.value);
-  try {
-    const result = await requestApiJson(`/api/v1/profiles?${params.toString()}`, {
-      signal: controller.signal,
+  if (append && input?.cursor) params.set('cursor', input.cursor);
+  const result = await requestApiJson(`/api/v1/profiles?${params.toString()}`, { signal });
+  const parsed = parseList(result.payload);
+  if (!append && parsed.items.length === 0) {
+    throw new ApiClientError('本地服务没有可用的用户空间，请恢复数据后重试。', {
+      code: 'INVALID_RESPONSE',
+      retryable: false,
     });
-    if (generation !== readGeneration) return;
-    const parsed = parseList(result.payload);
-    if (!append && parsed.items.length === 0) {
-      throw new ApiClientError('本地服务没有可用的用户空间，请恢复数据后重试。', {
-        code: 'INVALID_RESPONSE',
-        retryable: false,
-      });
-    }
+  }
+  return parsed;
+}
+
+async function loadProfiles({ append = false } = {}) {
+  readError.value = '';
+  const queryKey = `includeArchived=${includeArchived.value}`;
+  try {
+    const parsed = await profileResource.execute({
+      mode: append ? 'append' : 'replace',
+      input: { append, cursor: append ? nextCursor.value : null, queryKey },
+    });
+    if (!parsed) return;
     const knownIds = new Set(profiles.value.map((profile) => profile.id));
     const incoming = append ? parsed.items.filter((profile) => !knownIds.has(profile.id)) : parsed.items;
     profiles.value = append ? [...profiles.value, ...incoming] : incoming;
@@ -121,22 +116,16 @@ async function loadProfiles({ append = false } = {}) {
     nextCursor.value = parsed.nextCursor;
     hasMore.value = parsed.hasMore;
     writesDisabled.value = false;
-    readState.value = 'ready';
     announcement.value = append ? `已加载 ${incoming.length} 个用户空间。` : `已加载 ${profiles.value.length} 个用户空间。`;
   } catch (error) {
-    if (generation !== readGeneration) return;
-    if (error.code === 'REQUEST_ABORTED' && !timedOut) return;
-    readState.value = 'error';
-    writesDisabled.value = error.status === 423;
-    readError.value = timedOut ? '读取用户空间超时，请重试。' : apiErrorMessage(error);
-  } finally {
-    clearTimeout(timeout);
-    if (readController === controller) readController = null;
+    if (error?.code === 'REQUEST_ABORTED') return;
+    writesDisabled.value = error?.status === 423;
+    readError.value = error?.code === 'REQUEST_TIMEOUT' ? '读取用户空间超时，请重试。' : apiErrorMessage(error);
   }
 }
 
 function changeArchivedFilter() {
-  confirmingArchiveId.value = null;
+  archiveTarget.value = null;
   nextCursor.value = null;
   hasMore.value = false;
   profiles.value = [];
@@ -174,41 +163,34 @@ function applyMutationProjection(action, payload) {
   }
 }
 
-async function runMutation(pending) {
+async function runMutation(pending, { retrySame = false } = {}) {
   revisionConflict.value = false;
   mutationState.value = { kind: 'loading', action: pending.action, message: `${operationMessage(pending.action)}中…` };
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 30000);
   try {
-    const result = await requestApiJson(pending.request.path, {
-      method: pending.request.method,
-      body: pending.request.body,
-      ifMatch: pending.request.ifMatch,
-      idempotencyKey: pending.request.idempotencyKey,
-      signal: controller.signal,
-    });
-    clearTimeout(timeout);
+    const result = await (retrySame ? apiMutation.retrySame() : apiMutation.submit(pending.request));
+    if (!result) return;
     writesDisabled.value = false;
     applyMutationProjection(pending.action, result.payload);
     pendingMutation.value = null;
     mutationState.value = { kind: 'success', action: pending.action, message: `${operationMessage(pending.action)}成功。` };
     profileName.value = '';
     nameError.value = '';
-    confirmingArchiveId.value = null;
+    if (pending.action === 'create') createDialogOpen.value = false;
+    archiveTarget.value = null;
     await loadProfiles();
     if (pending.action === 'activate' || pending.action === 'create') emit('profile-activation-complete', result.payload);
   } catch (error) {
-    clearTimeout(timeout);
     if (error.status === 423) writesDisabled.value = true;
     revisionConflict.value = error.status === 409 || error.status === 428
       || error.code === 'REVISION_CONFLICT' || error.code === 'PRECONDITION_REQUIRED';
-    mutationState.value = { kind: 'error', action: pending.action, message: error.code === 'REQUEST_ABORTED' ? '提交结果待确认：操作仍在处理中，请查询结果或稍后使用相同操作重试。' : apiErrorMessage(error) };
+    mutationState.value = { kind: 'error', action: pending.action, message: error.code === 'MUTATION_PENDING' ? '提交结果待确认：操作仍在处理中，请查询结果或稍后使用相同操作重试。' : apiErrorMessage(error) };
     if (error.fieldErrors && error.fieldErrors.name) nameError.value = String(error.fieldErrors.name);
   }
 }
 
 function refreshAfterConflict() {
   pendingMutation.value = null;
+  apiMutation.clear();
   revisionConflict.value = false;
   mutationState.value = { kind: 'idle', action: '', message: '' };
   loadProfiles();
@@ -225,6 +207,22 @@ function submitCreate() {
   });
 }
 
+function openCreateDialog() {
+  if (writesDisabled.value || mutationState.value.kind === 'loading') return;
+  profileName.value = '';
+  nameError.value = '';
+  mutationState.value = { kind: 'idle', action: '', message: '' };
+  apiMutation.clear();
+  createDialogOpen.value = true;
+}
+
+function closeCreateDialog() {
+  if (mutationState.value.kind === 'loading') return;
+  createDialogOpen.value = false;
+  profileName.value = '';
+  nameError.value = '';
+}
+
 function activateProfile(profile) {
   if (profile.status !== 'INACTIVE' || mutationState.value.kind === 'loading' || writesDisabled.value) return;
   beginMutation('activate', {
@@ -238,11 +236,11 @@ function activateProfile(profile) {
 
 function askArchive(profile) {
   if (profile.status !== 'INACTIVE' || mutationState.value.kind === 'loading' || writesDisabled.value) return;
-  confirmingArchiveId.value = confirmingArchiveId.value === profile.id ? null : profile.id;
+  archiveTarget.value = profile;
 }
 
 function confirmArchive(profile) {
-  if (confirmingArchiveId.value !== profile.id || writesDisabled.value) return;
+  if (!archiveTarget.value || archiveTarget.value.id !== profile.id || writesDisabled.value || mutationState.value.kind === 'loading') return;
   beginMutation('archive', {
     method: 'DELETE',
     path: `/api/v1/profiles/${profile.id}`,
@@ -251,30 +249,34 @@ function confirmArchive(profile) {
   });
 }
 
+function cancelArchive() {
+  if (mutationState.value.kind !== 'loading') archiveTarget.value = null;
+}
+
 function retryPending() {
-  if (pendingMutation.value) runMutation(pendingMutation.value);
+  if (pendingMutation.value) runMutation(pendingMutation.value, { retrySame: true });
 }
 
 async function queryPendingOperation() {
   if (!pendingMutation.value) return;
-  const key = pendingMutation.value.request.idempotencyKey;
+  const pending = pendingMutation.value;
   mutationState.value = { kind: 'loading', action: pendingMutation.value.action, message: '正在查询操作结果…' };
   try {
-    const result = await requestApiJson(`/api/v1/operations/${encodeURIComponent(key)}`);
+    const result = await apiMutation.queryOperation();
     const status = result.payload && result.payload.data && result.payload.data.status;
     if (status === 'COMPLETED') {
-      const action = pendingMutation.value.action;
+      const action = pending.action;
       applyMutationProjection(action, result.payload);
       pendingMutation.value = null;
       mutationState.value = { kind: 'success', action, message: `${operationMessage(action)}成功。` };
       await loadProfiles();
       if (action === 'activate' || action === 'create') emit('profile-activation-complete');
     } else {
-      mutationState.value = { kind: 'error', action: pendingMutation.value.action, message: '操作尚未完成，请稍后查询。' };
+      mutationState.value = { kind: 'error', action: pending.action, message: '操作尚未完成，请稍后查询。' };
     }
   } catch (error) {
     if (error.status === 423) writesDisabled.value = true;
-    mutationState.value = { kind: 'error', action: pendingMutation.value.action, message: error.status === 404 ? '暂未找到操作结果，请稍后查询或重试。' : apiErrorMessage(error) };
+    mutationState.value = { kind: 'error', action: pending.action, message: error.status === 404 ? '暂未找到操作结果，请稍后查询或重试。' : apiErrorMessage(error) };
   }
 }
 
@@ -283,33 +285,53 @@ function retryRead() {
 }
 
 onMounted(() => loadProfiles());
-onUnmounted(() => {
-  readGeneration += 1;
-  if (readController) readController.abort();
-});
 </script>
 
 <template>
   <section class="profiles-page" aria-labelledby="profiles-page-title">
-    <h2 id="profiles-page-title" tabindex="-1">用户空间</h2>
-    <p class="page-intro">管理本地数据使用的用户空间。切换空间不会删除账本或备份。</p>
-
-    <form class="create-profile" @submit.prevent="submitCreate" novalidate>
-      <label for="profile-name">新建用户空间</label>
-      <div class="create-row">
-        <input
-          id="profile-name"
-          v-model="profileName"
-          type="text"
-          autocomplete="off"
-          :aria-invalid="nameError ? 'true' : 'false'"
-          :aria-describedby="nameError ? 'profile-name-error' : undefined"
-          placeholder="例如：家庭账本"
-        >
-        <button type="submit" :disabled="mutationState.kind === 'loading' || writesDisabled">创建</button>
+    <div class="profiles-heading-row">
+      <div>
+        <h2 id="profiles-page-title" tabindex="-1">用户空间</h2>
+        <p class="page-intro">管理本地数据使用的用户空间。切换空间不会删除账本或备份。</p>
       </div>
-      <p v-if="nameError" id="profile-name-error" class="field-error" role="alert">{{ nameError }}</p>
-    </form>
+      <button type="button" class="create-profile-trigger" aria-label="添加空间" :disabled="writesDisabled" @click="openCreateDialog">新建用户空间</button>
+    </div>
+
+    <AppDialog :open="createDialogOpen" title-id="profile-create-title" initial-focus="#profile-name" :busy="mutationState.kind === 'loading'" @close="closeCreateDialog">
+      <section class="profile-modal">
+        <div class="modal-heading">
+          <div>
+            <h3 id="profile-create-title">创建用户空间</h3>
+            <p>为另一套独立账本创建一个空间。</p>
+          </div>
+          <button type="button" class="modal-close" aria-label="关闭表单" :disabled="mutationState.kind === 'loading'" @click="closeCreateDialog">×</button>
+        </div>
+        <form class="create-profile" @submit.prevent="submitCreate" novalidate>
+          <label for="profile-name">新建用户空间</label>
+          <div class="create-row">
+            <input
+              id="profile-name"
+              v-model="profileName"
+              type="text"
+              autocomplete="off"
+              :aria-invalid="nameError ? 'true' : 'false'"
+              :aria-describedby="nameError ? 'profile-name-error' : undefined"
+              placeholder="例如：家庭账本"
+            >
+            <button type="submit" :disabled="mutationState.kind === 'loading' || writesDisabled">创建</button>
+          </div>
+          <p v-if="nameError" id="profile-name-error" class="field-error" role="alert">{{ nameError }}</p>
+          <p v-if="mutationState.kind !== 'idle'" class="operation-message" :class="`operation-${mutationState.kind}`" role="status" aria-live="polite">
+            {{ mutationState.message }}
+            <template v-if="mutationState.kind === 'error' && pendingMutation">
+              <button type="button" class="inline-action" :disabled="writesDisabled" @click="retryPending">重试</button>
+              <button type="button" class="inline-action" @click="queryPendingOperation">查询结果</button>
+            </template>
+            <button v-if="mutationState.kind === 'error' && revisionConflict" type="button" class="inline-action" @click="refreshAfterConflict">刷新</button>
+          </p>
+        </form>
+      </section>
+    </AppDialog>
 
     <div class="profiles-toolbar">
       <label class="archive-filter">
@@ -320,7 +342,7 @@ onUnmounted(() => {
     </div>
 
     <p v-if="announcement" class="sr-only" role="status" aria-live="polite">{{ announcement }}</p>
-    <p v-if="mutationState.kind !== 'idle'" class="operation-message" :class="`operation-${mutationState.kind}`" role="status" aria-live="polite">
+    <p v-if="mutationState.kind !== 'idle' && !createDialogOpen" class="operation-message" :class="`operation-${mutationState.kind}`" role="status" aria-live="polite">
       {{ mutationState.message }}
       <template v-if="mutationState.kind === 'error' && pendingMutation">
         <button type="button" class="inline-action" :disabled="writesDisabled" @click="retryPending">重试</button>
@@ -340,7 +362,7 @@ onUnmounted(() => {
           <div class="profile-copy">
             <h3>{{ profile.name }}</h3>
             <p class="profile-meta">
-              <span class="profile-status" :data-status="profile.status">{{ statusLabel(profile.status) }}</span>
+              <span class="profile-status" :data-status="profile.status">{{ entityStatusLabel(profile.status) }}</span>
               <span v-if="profile.lastOpenedAt">最近打开：{{ profile.lastOpenedAt }}</span>
             </p>
           </div>
@@ -361,11 +383,6 @@ onUnmounted(() => {
               :disabled="mutationState.kind === 'loading' || writesDisabled"
               @click="askArchive(profile)"
             >归档</button>
-            <div v-if="confirmingArchiveId === profile.id" class="archive-confirm" role="group" :aria-label="`确认归档 ${profile.name}`">
-              <span>归档后不会删除账本或备份。</span>
-              <button type="button" class="danger-button" :disabled="writesDisabled" @click="confirmArchive(profile)">确认归档</button>
-              <button type="button" class="secondary-button" @click="confirmingArchiveId = null">取消</button>
-            </div>
           </div>
         </li>
       </ul>
@@ -376,6 +393,22 @@ onUnmounted(() => {
       </p>
     </template>
   </section>
+  <AppDialog :open="Boolean(archiveTarget)" title-id="profile-archive-title" initial-focus="#profile-archive-confirm" :busy="mutationState.kind === 'loading'" :close-on-backdrop="false" @close="cancelArchive">
+    <section class="profile-modal confirm-modal">
+      <div class="modal-heading">
+        <div>
+          <h3 id="profile-archive-title">确认归档用户空间</h3>
+          <p>归档后不会删除账本或备份。</p>
+        </div>
+        <button type="button" class="modal-close" aria-label="关闭确认框" :disabled="mutationState.kind === 'loading'" @click="cancelArchive">×</button>
+      </div>
+      <p v-if="archiveTarget">确定归档“{{ archiveTarget.name }}”吗？</p>
+      <div class="row-actions">
+        <button id="profile-archive-confirm" type="button" class="danger-button" :disabled="writesDisabled || mutationState.kind === 'loading'" @click="confirmArchive(archiveTarget)">{{ mutationState.kind === 'loading' ? '归档中…' : '确认归档' }}</button>
+        <button type="button" class="secondary-button" :disabled="mutationState.kind === 'loading'" @click="cancelArchive">取消</button>
+      </div>
+    </section>
+  </AppDialog>
 </template>
 
 <style scoped>
@@ -402,7 +435,6 @@ input[type='text'] { min-height: 2.5rem; border: 1px solid var(--border-color, #
 .profile-actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 0.5rem; }
 .active-mark { color: #176b3a; font-weight: 600; }
 .muted-action { color: #6b7280; }
-.archive-confirm { display: flex; flex-basis: 100%; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 0.5rem; color: #8a1c13; font-size: 0.9rem; }
 .operation-message { margin: 0; padding: 0.65rem 0.8rem; border-radius: 0.45rem; background: #eef4ff; color: #174ea6; }
 .operation-error { background: #fff1f0; color: #8a1c13; }
 .operation-success { background: #edf8f0; color: #176b3a; }
@@ -436,12 +468,10 @@ input[type='text'] { min-height: 2.5rem; border: 1px solid var(--border-color, #
 .operation-message { padding: 1rem 1.1rem; border: 1px solid var(--border-color); border-radius: .45rem; background: var(--surface-muted); color: var(--muted-text); line-height: 1.5; }
 .operation-error { border-color: #e4c5c0; background: #fbefec; color: var(--danger); }
 .operation-success { border-color: #c7ddd0; background: #eef6f0; color: var(--success); }
-@media (max-width: 36rem) { .create-row, .profile-card { flex-direction: column; } .create-row button, .profile-actions, .profile-actions > button { width: 100%; } .profile-actions { justify-content: stretch; } .archive-confirm { justify-content: stretch; } .archive-confirm > * { width: 100%; } }
+@media (max-width: 36rem) { .create-row, .profile-card { flex-direction: column; } .create-row button, .profile-actions, .profile-actions > button { width: 100%; } .profile-actions { justify-content: stretch; } }
 @media (max-width: 36rem) {
   .create-row, .profile-card { flex-direction: column; }
   .create-row button, .profile-actions, .profile-actions > button { width: 100%; }
   .profile-actions { justify-content: stretch; }
-  .archive-confirm { justify-content: stretch; }
-  .archive-confirm > * { width: 100%; }
 }
 </style>

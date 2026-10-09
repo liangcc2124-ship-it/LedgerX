@@ -45,7 +45,7 @@ Electron 与 Playwright 命令在受控主机权限下运行；首次 Electron �
 
 ## 未包含与后续风险
 
-- BUG-004 最终重验已通过用户授权的 Node 24.19.0 环境；Node 22.18.0 基线仍未复测，详见 [BUG-004 实际验收报告](../tasks/BUG-004-s0-startup-reacceptance.md#8-实际验收报告)。
+- BUG-004 的历史重验曾通过用户授权的 Node 24.19.0 环境；该任务规格已按清理规则删除，历史证据保留在本记录中。当前 renderer 崩溃使旧发布证据失效，新的退出条件见 [P7-003](../tasks/P7-003-reproducible-release-gate.md)。
 - 正式安装包、签名、自动更新、桌面快捷方式不属于 S0-006，未执行。
 - Forge 6.4.2 的 18 high / 1 critical 仍受 ADR-006 临时开发豁免约束，正式发布前必须复审或修复。
 - 当前机器 Node 为 24.19.0，项目记录的构建基线为 Node 22.18.0；Electron/Java/SQLite 集成已在本机验证，但如需声明 Node 22 基线支持，仍需单独复测。

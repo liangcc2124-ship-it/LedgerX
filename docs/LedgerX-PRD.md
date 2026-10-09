@@ -1,5 +1,7 @@
 # LedgerX 个人财务管理软件需求文档
 
+> **历史文档**：产品愿景仅供追溯，不定义 Java 11 重构技术栈或当前实施范围。新实现以 [requirements.md](./requirements.md)、[architecture.md](./architecture.md) 和 [api.md](./api.md) 为准；目标是本机浏览器中的 Vue + Java 服务，首期不做 PDF。
+
 > 本文档已由 [LedgerX 产品需求文档 v2](./LedgerX-产品需求文档-v2.md) 取代，仅保留作为早期需求记录。
 
 - 文档版本：v1.2

@@ -1,7 +1,13 @@
 const STATUS_PATH = '/api/v1/system/status';
 const API_MAJOR = '1';
 const STATUS_STATES = new Set(['STARTING', 'READY', 'RECOVERY_REQUIRED']);
+const SETUP_STATES = new Set(['PENDING', 'REVIEW_REQUIRED', 'COMPLETED']);
+const ISO_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const PROFILE_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+const CSRF_TOKEN_PATTERN = /^[A-Za-z0-9_-]{43}$/;
+const SESSION_PATH = '/api/v1/system/session';
+let activeSession = null;
+let sessionBootstrap = null;
 
 export class ApiClientError extends Error {
   constructor(message, {
@@ -62,6 +68,47 @@ function responseRequestId(response, requestId) {
   return response.headers.get('X-Request-Id') || requestId;
 }
 
+function clearSession() {
+  activeSession = null;
+}
+
+async function ensureSession({ fetchImpl, signal }) {
+  if (activeSession) return activeSession;
+  if (sessionBootstrap) return sessionBootstrap;
+  const requestId = createRequestId();
+  sessionBootstrap = (async () => {
+    let response;
+    try {
+      response = await fetchImpl(SESSION_PATH, {
+        method: 'GET',
+        headers: { Accept: 'application/json', 'X-Request-Id': requestId },
+        credentials: 'same-origin',
+        signal,
+      });
+    } catch (error) {
+      if (error && error.name === 'AbortError') throw error;
+      throw new ApiClientError('无法连接本地服务，请重试。', { requestId });
+    }
+    const { payload } = await parseJsonResponse(response, requestId);
+    const data = payload?.data;
+    if (!isRecord(data) || data.authMode !== 'browser'
+        || !CSRF_TOKEN_PATTERN.test(data.csrfToken || '')) {
+      throw new ApiClientError('本地服务返回了无效的会话信息，请重新打开应用。', {
+        status: response.status,
+        code: 'INVALID_RESPONSE',
+        requestId: responseRequestId(response, requestId),
+      });
+    }
+    activeSession = { csrfToken: data.csrfToken };
+    return activeSession;
+  })();
+  try {
+    return await sessionBootstrap;
+  } finally {
+    sessionBootstrap = null;
+  }
+}
+
 async function parseJsonResponse(response, requestId) {
   const actualRequestId = responseRequestId(response, requestId);
   let text;
@@ -106,8 +153,8 @@ async function parseJsonResponse(response, requestId) {
 
 /**
  * The only generic JSON request entry point for business API pages.
- * Authentication is deliberately supplied by the Electron session or the
- * Node-only Vite proxy, never by renderer code.
+ * Browser requests use a same-origin HttpOnly session cookie and in-memory
+ * CSRF token. Desktop-shell authentication is not part of the active web client.
  */
 export async function requestApiJson(path, {
   method = 'GET',
@@ -126,6 +173,8 @@ export async function requestApiJson(path, {
     throw new ApiClientError('无法连接本地服务，请重试。');
   }
 
+  const session = await ensureSession({ fetchImpl, signal });
+
   const requestId = createRequestId();
   const headers = {
     Accept: 'application/json',
@@ -134,7 +183,7 @@ export async function requestApiJson(path, {
   const requestOptions = {
     method: normalizedMethod,
     headers,
-    credentials: 'omit',
+    credentials: 'same-origin',
     signal,
   };
   if (body !== undefined) {
@@ -146,6 +195,9 @@ export async function requestApiJson(path, {
   }
   if (idempotencyKey !== undefined && idempotencyKey !== null) {
     headers['Idempotency-Key'] = String(idempotencyKey);
+  }
+  if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(normalizedMethod)) {
+    headers['X-LedgerX-CSRF'] = session.csrfToken;
   }
 
   let response;
@@ -161,7 +213,14 @@ export async function requestApiJson(path, {
     }
     throw new ApiClientError('无法连接本地服务，请重试。', { requestId });
   }
-  return parseJsonResponse(response, requestId);
+  try {
+    return await parseJsonResponse(response, requestId);
+  } catch (error) {
+    if (error instanceof ApiClientError && (error.status === 401 || error.code === 'INVALID_CSRF_TOKEN')) {
+      clearSession();
+    }
+    throw error;
+  }
 }
 
 function isValidStatusPayload(payload) {
@@ -183,13 +242,19 @@ function isValidStatusPayload(payload) {
     return Number.isInteger(data.schemaVersion) && data.schemaVersion > 0
       && typeof data.activeProfileId === 'string'
       && PROFILE_ID_PATTERN.test(data.activeProfileId)
+      && SETUP_STATES.has(data.setupState)
+      && (data.setupState === 'COMPLETED'
+        ? typeof data.ledgerStartOn === 'string' && ISO_DATE_PATTERN.test(data.ledgerStartOn)
+        : data.ledgerStartOn === null)
       && Number.isSafeInteger(dataRevision) && dataRevision >= 0;
   }
 
-  return data.schemaVersion === null && data.activeProfileId === null && dataRevision === null;
+  return data.schemaVersion === null && data.activeProfileId === null && dataRevision === null
+    && data.setupState === null && data.ledgerStartOn === null;
 }
 
 export async function getSystemStatus({ fetchImpl = globalThis.fetch, signal } = {}) {
+  await ensureSession({ fetchImpl, signal });
   const requestId = createRequestId();
   let response;
   try {
@@ -199,7 +264,7 @@ export async function getSystemStatus({ fetchImpl = globalThis.fetch, signal } =
         Accept: 'application/json',
         'X-Request-Id': requestId,
       },
-      credentials: 'omit',
+      credentials: 'same-origin',
       signal,
     });
   } catch (error) {
@@ -224,6 +289,7 @@ export async function getSystemStatus({ fetchImpl = globalThis.fetch, signal } =
 
   if (!response.ok) {
     const apiError = payload && payload.error ? payload.error : {};
+    if (response.status === 401 || apiError.code === 'INVALID_CSRF_TOKEN') clearSession();
     throw new ApiClientError(apiError.message || '本地服务暂时不可用，请重试。', {
       status: response.status,
       code: apiError.code || (response.status === 401 ? 'AUTHENTICATION_REQUIRED' : 'SERVICE_UNAVAILABLE'),
@@ -240,6 +306,154 @@ export async function getSystemStatus({ fetchImpl = globalThis.fetch, signal } =
     });
   }
   return payload;
+}
+
+function queryValue(value) {
+  return encodeURIComponent(String(value));
+}
+
+export async function getMetrics({ includeArchived = false, fetchImpl = globalThis.fetch, signal } = {}) {
+  const status = includeArchived ? 'ARCHIVED' : 'ACTIVE';
+  return requestApiJson(`/api/v1/metrics?status=${status}&limit=200`, { fetchImpl, signal });
+}
+
+export async function getLedgerInitialization({ fetchImpl = globalThis.fetch, signal } = {}) {
+  return requestApiJson('/api/v1/ledger-initialization', { fetchImpl, signal });
+}
+
+export async function initializeLedger(body, { idempotencyKey = createRequestId(), fetchImpl = globalThis.fetch, signal } = {}) {
+  return requestApiJson('/api/v1/ledger-initialization', {
+    method: 'POST', body, idempotencyKey, fetchImpl, signal,
+  });
+}
+
+export async function getMetric(id, { includeArchived = false, fetchImpl = globalThis.fetch, signal } = {}) {
+  const suffix = includeArchived ? '?status=ARCHIVED' : '';
+  return requestApiJson(`/api/v1/metrics/${encodeURIComponent(id)}${suffix}`, { fetchImpl, signal });
+}
+
+export async function createMetric(body, { idempotencyKey = createRequestId(), fetchImpl = globalThis.fetch, signal } = {}) {
+  return requestApiJson('/api/v1/metrics', { method: 'POST', body, idempotencyKey, fetchImpl, signal });
+}
+
+export async function updateMetric(id, body, { ifMatch, idempotencyKey = createRequestId(), fetchImpl = globalThis.fetch, signal } = {}) {
+  return requestApiJson(`/api/v1/metrics/${encodeURIComponent(id)}`, {
+    method: 'PUT', body, ifMatch, idempotencyKey, fetchImpl, signal,
+  });
+}
+
+export async function archiveMetric(id, { ifMatch, idempotencyKey = createRequestId(), fetchImpl = globalThis.fetch, signal } = {}) {
+  return requestApiJson(`/api/v1/metrics/${encodeURIComponent(id)}`, {
+    method: 'DELETE', ifMatch, idempotencyKey, fetchImpl, signal,
+  });
+}
+
+export async function getDashboard({ granularity, anchor, fetchImpl = globalThis.fetch, signal } = {}) {
+  return requestApiJson(`/api/v1/dashboard?granularity=${queryValue(granularity)}&anchor=${queryValue(anchor)}`, { fetchImpl, signal });
+}
+
+export async function getDashboardLayout({ fetchImpl = globalThis.fetch, signal } = {}) {
+  return requestApiJson('/api/v1/dashboard/layout', { fetchImpl, signal });
+}
+
+export async function replaceDashboardLayout(items, { ifMatch, idempotencyKey = createRequestId(), fetchImpl = globalThis.fetch, signal } = {}) {
+  return requestApiJson('/api/v1/dashboard/layout', {
+    method: 'PUT', body: { items }, ifMatch, idempotencyKey, fetchImpl, signal,
+  });
+}
+
+export async function resetDashboardLayout({ ifMatch, idempotencyKey = createRequestId(), fetchImpl = globalThis.fetch, signal } = {}) {
+  return requestApiJson('/api/v1/dashboard/layout/reset', {
+    method: 'POST', body: {}, ifMatch, idempotencyKey, fetchImpl, signal,
+  });
+}
+
+export async function validateFormula(body, { fetchImpl = globalThis.fetch, signal } = {}) {
+  return requestApiJson('/api/v1/formulas/validate', { method: 'POST', body, fetchImpl, signal });
+}
+
+export async function previewFormula(body, { fetchImpl = globalThis.fetch, signal } = {}) {
+  return requestApiJson('/api/v1/formulas/preview', { method: 'POST', body, fetchImpl, signal });
+}
+
+export async function listFormulaVersions(formulaId, { limit = 50, cursor, fetchImpl = globalThis.fetch, signal } = {}) {
+  const cursorQuery = cursor ? `&cursor=${queryValue(cursor)}` : '';
+  return requestApiJson(`/api/v1/formulas/${encodeURIComponent(formulaId)}/versions?limit=${limit}${cursorQuery}`, { fetchImpl, signal });
+}
+
+export async function createBackup({ idempotencyKey = createRequestId(), fetchImpl = globalThis.fetch, signal } = {}) {
+  return requestApiJson('/api/v1/backups', {
+    method: 'POST', body: {}, idempotencyKey, fetchImpl, signal,
+  });
+}
+
+export async function listBackups({ limit = 25, cursor, fetchImpl = globalThis.fetch, signal } = {}) {
+  const cursorQuery = cursor ? `&cursor=${queryValue(cursor)}` : '';
+  return requestApiJson(`/api/v1/backups?limit=${encodeURIComponent(limit)}${cursorQuery}`, { fetchImpl, signal });
+}
+
+export async function verifyBackup(id, { fetchImpl = globalThis.fetch, signal } = {}) {
+  return requestApiJson(`/api/v1/backups/${encodeURIComponent(id)}/verify`, { fetchImpl, signal });
+}
+
+export async function downloadBackup(id, { fetchImpl = globalThis.fetch, signal } = {}) {
+  const requestPath = `/api/v1/backups/${encodeURIComponent(id)}/download`;
+  await ensureSession({ fetchImpl, signal });
+  const requestId = createRequestId();
+  let response;
+  try {
+    response = await fetchImpl(requestPath, {
+      method: 'GET',
+      headers: {
+        Accept: 'application/vnd.ledgerx.backup+zip',
+        'X-Request-Id': requestId,
+      },
+      credentials: 'same-origin',
+      signal,
+    });
+  } catch (error) {
+    if (error && error.name === 'AbortError') throw error;
+    throw new ApiClientError('无法连接本地服务，请重试。', { requestId });
+  }
+
+  if (!response.ok) {
+    try {
+      await parseJsonResponse(response, requestId);
+    } catch (error) {
+      if (error instanceof ApiClientError && (error.status === 401 || error.code === 'INVALID_CSRF_TOKEN')) {
+        clearSession();
+      }
+      throw error;
+    }
+    throw new ApiClientError('本地服务暂时不可用，请重试。', {
+      status: response.status,
+      requestId: responseRequestId(response, requestId),
+    });
+  }
+
+  const contentType = (response.headers.get('Content-Type') || '').split(';', 1)[0].trim().toLowerCase();
+  if (contentType !== 'application/vnd.ledgerx.backup+zip') {
+    throw new ApiClientError('本地服务返回了无法识别的备份文件，请重试。', {
+      status: response.status,
+      code: 'INVALID_RESPONSE',
+      retryable: false,
+      requestId: responseRequestId(response, requestId),
+    });
+  }
+
+  try {
+    return {
+      blob: await response.blob(),
+      fileName: `${id}.ledgerx-backup`,
+      requestId: responseRequestId(response, requestId),
+    };
+  } catch (error) {
+    throw new ApiClientError('备份文件下载不完整，请重试。', {
+      status: response.status,
+      code: 'INVALID_RESPONSE',
+      requestId: responseRequestId(response, requestId),
+    });
+  }
 }
 
 export { isValidStatusPayload };

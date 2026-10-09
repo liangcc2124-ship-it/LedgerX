@@ -27,7 +27,7 @@
 | 被依赖方 | system status、所有 active-profile 业务模块、Vue 空间切换器、迁移与恢复模块。 |
 | 方向 | HTTP → profile application service → persistence/filesystem；persistence 不依赖 HTTP 或 Vue。 |
 
-当前 Windows 桌面会话是唯一主体。只有本模块可显式接收 profile ID 并改变 active context；其他业务模块只能读取当前 context。
+当前 Java 本机服务为单用户提供浏览器同源会话。只有本模块可显式接收 profile ID 并改变 active context；其他业务模块只能读取当前 context。
 
 ## 3. 实体、规则、不变量与权限
 
@@ -71,7 +71,7 @@
 
 | 场景 | 可验证结果 | 层次 |
 | --- | --- | --- |
-| 新建空间 | 新 ID 成为 active，旧空间数据不混入，新 ledger 可重开。 | SQLite + HTTP + Electron E2E |
+| 新建空间 | 新 ID 成为 active，旧空间数据不混入，新 ledger 可重开。 | SQLite + HTTP + 真实浏览器 E2E |
 | 同 key 重试创建 | 返回首次 201/body，只有一个目录/profile，revision 不再增加。 | SQLite/HTTP |
 | 切换空间 | status 和 profiles 响应均指向目标；旧游标/草稿失效。 | HTTP + E2E |
 | 目标库损坏 | 原 active 可继续使用，切换失败且不改 pointer。 | 故障注入 |

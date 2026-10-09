@@ -12,6 +12,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.PrintStream;
 import java.net.InetSocketAddress;
+import java.net.Socket;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -20,8 +21,6 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
-import java.util.Base64;
-import java.util.Collections;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
@@ -36,7 +35,6 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class LedgerHttpServerTest {
-    private static final String TOKEN = Base64.getUrlEncoder().withoutPadding().encodeToString(new byte[32]);
     static {
         System.setProperty("jdk.httpclient.allowRestrictedHeaders", "host");
     }
@@ -94,7 +92,7 @@ class LedgerHttpServerTest {
     }
 
     @Test
-    void statusEnforcesRequestIdAuthenticationHostAndOrigin(@TempDir Path temp) throws Exception {
+    void requestIdentifiersAreValidatedBeforeApplicationAccess(@TempDir Path temp) throws Exception {
         prepareWebRoot(temp);
         AtomicInteger calls = new AtomicInteger();
         SystemStatusProvider provider = () -> {
@@ -105,73 +103,114 @@ class LedgerHttpServerTest {
         server = newServer(provider, null, temp, 2, 2, output);
         server.start();
 
-        HttpResponse<String> missingRequestId = send("GET", "/api/v1/system/status", null, null, TOKEN, null);
+        HttpResponse<String> missingRequestId = send("GET", "/api/v1/system/status", null, null, null, null);
         assertEquals(400, missingRequestId.statusCode());
         assertEquals("INVALID_REQUEST_ID", errorCode(missingRequestId));
         assertNotNull(missingRequestId.headers().firstValue("x-request-id").orElse(null));
         assertEquals(0, calls.get());
 
-        HttpResponse<String> invalidRequestId = send("GET", "/api/v1/system/status", null, null, TOKEN,
+        HttpResponse<String> invalidRequestId = send("GET", "/api/v1/system/status", null, null, null,
                 "not-a-uuid");
         assertEquals(400, invalidRequestId.statusCode());
         assertEquals("INVALID_REQUEST_ID", errorCode(invalidRequestId));
         assertNotNull(invalidRequestId.headers().firstValue("x-request-id").orElse(null));
         assertEquals(0, calls.get());
 
-        HttpResponse<String> wrongToken = send("GET", "/api/v1/system/status", null, null,
-                TOKEN.substring(0, TOKEN.length() - 1) + "_", UUID.randomUUID().toString());
-        assertEquals(401, wrongToken.statusCode());
-        assertEquals("AUTHENTICATION_REQUIRED", errorCode(wrongToken));
-        assertFalse(wrongToken.body().contains(TOKEN));
-        assertEquals(0, calls.get());
-
-        HttpResponse<String> missingToken = send("GET", "/api/v1/system/status", null, null,
-                null, UUID.randomUUID().toString());
-        assertEquals(401, missingToken.statusCode());
-        assertEquals("AUTHENTICATION_REQUIRED", errorCode(missingToken));
-        assertEquals(0, calls.get());
-
-        String requestId = UUID.randomUUID().toString();
-        HttpResponse<String> status = send("GET", "/api/v1/system/status", null, null, TOKEN, requestId);
+        HttpResponse<String> status = send("GET", "/api/v1/system/status", null, null, "browser",
+                UUID.randomUUID().toString());
         assertEquals(200, status.statusCode());
-        assertEquals(requestId, status.headers().firstValue("x-request-id").orElse(""));
         assertEquals("1.0", status.headers().firstValue("ledgerx-api-version").orElse(""));
         assertTrue(status.body().contains("\"state\":\"STARTING\""));
         assertTrue(status.body().contains("\"capabilities\":[\"system.status\"]"));
-        assertFalse(status.body().contains(TOKEN));
         ObjectMapper mapper = new ObjectMapper();
         assertEquals(
                 mapper.readTree(Files.readString(
                         Path.of("docs/contracts/api-v1/system/status-starting.json"), StandardCharsets.UTF_8)),
                 mapper.readTree(status.body()));
         assertEquals(1, calls.get());
+        assertEquals(1, calls.get());
+    }
 
-        CompletableFuture<HttpResponse<String>> concurrentA = CompletableFuture.supplyAsync(
-                () -> sendUnchecked("GET", "/api/v1/system/status", TOKEN));
-        CompletableFuture<HttpResponse<String>> concurrentB = CompletableFuture.supplyAsync(
-                () -> sendUnchecked("GET", "/api/v1/system/status", TOKEN));
-        assertEquals(200, concurrentA.get(2, TimeUnit.SECONDS).statusCode());
-        assertEquals(200, concurrentB.get(2, TimeUnit.SECONDS).statusCode());
-        assertEquals(3, calls.get());
-        assertFalse(output.toString(StandardCharsets.UTF_8).contains(TOKEN));
+    @Test
+    void browserSessionRequiresCookieHostOriginAndCsrf(@TempDir Path temp) throws Exception {
+        prepareWebRoot(temp);
+        server = LedgerHttpServer.forBrowser(
+                new InetSocketAddress("127.0.0.1", 0),
+                StaticResourceManifest.forDirectory(temp, Map.of("index.html", "index.html",
+                        "assets/app.js", "assets/app.js")),
+                new InitialSystemStatusProvider(BuildMetadata.applicationVersion()),
+                new PrintStream(new ByteArrayOutputStream(), true, StandardCharsets.UTF_8), 2, 2);
+        server.start();
 
-        HttpResponse<String> wrongHost = sendWithHost("GET", "/api/v1/system/status", null, null, TOKEN,
-                UUID.randomUUID().toString(), "localhost:" + server.address().getPort(), null);
-        assertEquals(403, wrongHost.statusCode());
-        assertEquals("REQUEST_ORIGIN_FORBIDDEN", errorCode(wrongHost));
-        assertEquals(3, calls.get());
+        String requestId = UUID.randomUUID().toString();
+        HttpResponse<String> bootstrap = sendBrowser("GET", "/api/v1/system/session", null, null,
+                server.origin(), server.address().getHostString() + ":" + server.address().getPort(), requestId);
+        assertEquals(200, bootstrap.statusCode());
+        assertEquals("no-store", bootstrap.headers().firstValue("cache-control").orElse(""));
+        String setCookie = bootstrap.headers().firstValue("set-cookie").orElseThrow();
+        assertTrue(setCookie.startsWith("ledgerx_session="));
+        assertTrue(setCookie.contains("HttpOnly"));
+        assertTrue(setCookie.contains("SameSite=Strict"));
+        assertTrue(setCookie.contains("Path=/"));
+        assertFalse(setCookie.toLowerCase(java.util.Locale.ROOT).contains("domain="));
+        String cookie = setCookie.substring(0, setCookie.indexOf(';'));
+        String csrf = new ObjectMapper().readTree(bootstrap.body()).path("data").path("csrfToken").asText();
+        assertTrue(csrf.matches("[A-Za-z0-9_-]{43}"));
+        assertFalse(bootstrap.body().contains(cookie.substring(cookie.indexOf('=') + 1)));
 
-        HttpResponse<String> wrongOrigin = sendWithHost("GET", "/api/v1/system/status", null, null, TOKEN,
-                UUID.randomUUID().toString(), server.address().getHostString() + ":" + server.address().getPort(),
-                "http://evil.invalid");
+        HttpResponse<String> missingCookie = sendBrowser("GET", "/api/v1/system/status", null, null,
+                server.origin(), server.address().getHostString() + ":" + server.address().getPort(),
+                UUID.randomUUID().toString());
+        assertEquals(401, missingCookie.statusCode());
+        assertEquals("AUTHENTICATION_REQUIRED", errorCode(missingCookie));
+
+        HttpRequest bearerOnly = HttpRequest.newBuilder()
+                .uri(URI.create(server.origin() + "/api/v1/system/status"))
+                .header("Authorization", "Bearer legacy-token")
+                .header("X-Request-Id", UUID.randomUUID().toString())
+                .GET().build();
+        HttpResponse<String> bearerRejected = CLIENT.send(bearerOnly, HttpResponse.BodyHandlers.ofString());
+        assertEquals(401, bearerRejected.statusCode());
+        assertEquals("AUTHENTICATION_REQUIRED", errorCode(bearerRejected));
+
+        HttpResponse<String> status = sendBrowser("GET", "/api/v1/system/status", cookie, null,
+                server.origin(), server.address().getHostString() + ":" + server.address().getPort(),
+                UUID.randomUUID().toString());
+        assertEquals(200, status.statusCode());
+        assertTrue(status.body().contains("\"state\":\"STARTING\""));
+
+        String profileJson = "{\"id\":\"7d8ef560-16d8-4bd8-83f3-8e60310928f8\",\"name\":\"test\"}";
+        HttpResponse<String> missingCsrf = sendBrowser("POST", "/api/v1/profiles", cookie, null,
+                server.origin(), server.address().getHostString() + ":" + server.address().getPort(),
+                UUID.randomUUID().toString(), profileJson);
+        assertEquals(403, missingCsrf.statusCode());
+        assertEquals("INVALID_CSRF_TOKEN", errorCode(missingCsrf));
+
+        HttpResponse<String> wrongCsrf = sendBrowser("POST", "/api/v1/profiles", cookie, "wrong",
+                server.origin(), server.address().getHostString() + ":" + server.address().getPort(),
+                UUID.randomUUID().toString(), profileJson);
+        assertEquals(403, wrongCsrf.statusCode());
+        assertEquals("INVALID_CSRF_TOKEN", errorCode(wrongCsrf));
+
+        HttpResponse<String> validCsrf = sendBrowser("POST", "/api/v1/profiles", cookie, csrf,
+                server.origin(), server.address().getHostString() + ":" + server.address().getPort(),
+                UUID.randomUUID().toString(), profileJson);
+        assertEquals(423, validCsrf.statusCode());
+        assertEquals("RECOVERY_REQUIRED", errorCode(validCsrf));
+
+        HttpResponse<String> wrongOrigin = sendBrowser("GET", "/api/v1/system/status", cookie, null,
+                "http://evil.invalid", server.address().getHostString() + ":" + server.address().getPort(),
+                UUID.randomUUID().toString());
         assertEquals(403, wrongOrigin.statusCode());
-        assertEquals(3, calls.get());
+        assertEquals("REQUEST_ORIGIN_FORBIDDEN", errorCode(wrongOrigin));
 
-        HttpResponse<String> wrongMethod = sendWith("POST", "/api/v1/system/status", "", "", TOKEN,
-                UUID.randomUUID().toString(), server.origin());
-        assertEquals(405, wrongMethod.statusCode());
-        assertEquals("GET", wrongMethod.headers().firstValue("allow").orElse(""));
-        assertEquals(3, calls.get());
+        HttpResponse<String> wrongHostBootstrap = sendBrowser("GET", "/api/v1/system/session", null, null,
+                server.origin(), "localhost:" + server.address().getPort(), UUID.randomUUID().toString());
+        assertEquals(403, wrongHostBootstrap.statusCode());
+
+        HttpResponse<String> page = send("GET", "/", null, null, null, null);
+        assertTrue(page.headers().firstValue("content-security-policy").orElse("").contains("frame-ancestors 'none'"));
+        assertEquals("nosniff", page.headers().firstValue("x-content-type-options").orElse(""));
     }
 
     @Test
@@ -184,22 +223,45 @@ class LedgerHttpServerTest {
         }, null, temp, 2, 2, new ByteArrayOutputStream());
         server.start();
 
-        HttpResponse<String> mediaType = sendWith("POST", "/api/v1/system/status", "{}", "text/plain", TOKEN,
+        HttpResponse<String> mediaType = sendWith("POST", "/api/v1/system/status", "{}", "text/plain", "browser",
                 UUID.randomUUID().toString(), server.origin());
         assertEquals(415, mediaType.statusCode());
         assertEquals("UNSUPPORTED_MEDIA_TYPE", errorCode(mediaType));
 
-        HttpResponse<String> malformed = sendWith("POST", "/api/v1/system/status", "{", "application/json", TOKEN,
+        HttpResponse<String> malformed = sendWith("POST", "/api/v1/system/status", "{", "application/json", "browser",
                 UUID.randomUUID().toString(), server.origin());
         assertEquals(400, malformed.statusCode());
         assertEquals("INVALID_JSON", errorCode(malformed));
 
-        byte[] oversized = new byte[LedgerHttpServer.MAX_JSON_BODY_BYTES + 1];
-        HttpRequest request = request("POST", "/api/v1/system/status", oversized, "application/json", TOKEN,
-                UUID.randomUUID().toString(), server.origin());
-        HttpResponse<String> tooLarge = CLIENT.send(request, HttpResponse.BodyHandlers.ofString());
-        assertEquals(413, tooLarge.statusCode());
-        assertEquals("PAYLOAD_TOO_LARGE", errorCode(tooLarge));
+        HttpResponse<String> bootstrap = sendBrowser("GET", "/api/v1/system/session", null, null,
+                server.origin(), server.address().getHostString() + ":" + server.address().getPort(),
+                UUID.randomUUID().toString());
+        assertEquals(200, bootstrap.statusCode());
+        String cookie = bootstrap.headers().firstValue("Set-Cookie").orElseThrow()
+                .split(";", 2)[0];
+        String csrf = new ObjectMapper().readTree(bootstrap.body()).path("data").path("csrfToken").asText();
+        String host = server.address().getHostString() + ":" + server.address().getPort();
+        String oversizedHeaders = "POST /api/v1/system/status HTTP/1.1\r\n"
+                + "Host: " + host + "\r\n"
+                + "Origin: " + server.origin() + "\r\n"
+                + "Cookie: " + cookie + "\r\n"
+                + "X-LedgerX-CSRF: " + csrf + "\r\n"
+                + "X-Request-Id: " + UUID.randomUUID() + "\r\n"
+                + "Content-Type: application/json\r\n"
+                + "Content-Length: " + (LedgerHttpServer.MAX_JSON_BODY_BYTES + 1) + "\r\n"
+                + "Connection: close\r\n\r\n";
+        ByteArrayOutputStream oversizedResponse = new ByteArrayOutputStream();
+        try (Socket rawClient = new Socket()) {
+            rawClient.connect(new InetSocketAddress(server.address().getAddress(), server.address().getPort()), 2_000);
+            rawClient.setSoTimeout(3_000);
+            rawClient.getOutputStream().write(oversizedHeaders.getBytes(StandardCharsets.US_ASCII));
+            rawClient.getOutputStream().flush();
+            rawClient.shutdownOutput();
+            rawClient.getInputStream().transferTo(oversizedResponse);
+        }
+        String oversizedResult = oversizedResponse.toString(StandardCharsets.UTF_8);
+        assertTrue(oversizedResult.startsWith("HTTP/1.1 413 "), oversizedResult);
+        assertTrue(oversizedResult.contains("\"code\":\"PAYLOAD_TOO_LARGE\""), oversizedResult);
         assertEquals(0, calls.get());
     }
 
@@ -213,13 +275,13 @@ class LedgerHttpServerTest {
 
         CompletableFuture<HttpResponse<String>> first = CompletableFuture.supplyAsync(() -> {
             try {
-                return send("GET", "/api/v1/system/status", null, null, TOKEN, UUID.randomUUID().toString());
+                return send("GET", "/api/v1/system/status", null, null, "browser", UUID.randomUUID().toString());
             } catch (IOException | InterruptedException ex) {
                 throw new RuntimeException(ex);
             }
         });
         assertTrue(provider.entered.await(2, TimeUnit.SECONDS));
-        HttpResponse<String> second = send("GET", "/api/v1/system/status", null, null, TOKEN,
+        HttpResponse<String> second = send("GET", "/api/v1/system/status", null, null, "browser",
                 UUID.randomUUID().toString());
         assertEquals(429, second.statusCode());
         assertEquals("RATE_LIMITED", errorCode(second));
@@ -235,23 +297,11 @@ class LedgerHttpServerTest {
     }
 
     @Test
-    void tokenFormatIsStrict() {
-        assertTrue(SessionToken.isValid(TOKEN));
-        assertFalse(SessionToken.isValid("short"));
-        assertFalse(SessionToken.isValid(TOKEN + "="));
-        assertFalse(SessionToken.isValid(Base64.getUrlEncoder().withoutPadding().encodeToString(new byte[31])));
-        assertEquals(TOKEN, SessionToken.fromEnvironment(Collections.singletonMap(
-                SessionToken.ENVIRONMENT_NAME, TOKEN)));
-        assertThrows(IllegalArgumentException.class, () -> SessionToken.fromEnvironment(Collections.emptyMap()));
-    }
-
-    @Test
     void nonLoopbackBindIsRejected(@TempDir Path temp) throws Exception {
         prepareWebRoot(temp);
         StaticResourceManifest manifest = StaticResourceManifest.forDirectory(
                 temp, Map.of("index.html", "index.html", "assets/app.js", "assets/app.js"));
         assertThrows(IllegalArgumentException.class, () -> new LedgerHttpServer(
-                TOKEN,
                 new InetSocketAddress("0.0.0.0", 0),
                 manifest,
                 new InitialSystemStatusProvider(BuildMetadata.applicationVersion()),
@@ -275,7 +325,6 @@ class LedgerHttpServerTest {
             actual = new InitialSystemStatusProvider(ignoredVersion);
         }
         return new LedgerHttpServer(
-                TOKEN,
                 new InetSocketAddress("127.0.0.1", 0),
                 manifest,
                 actual,
@@ -334,6 +383,38 @@ class LedgerHttpServerTest {
         return CLIENT.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
     }
 
+    private HttpResponse<String> sendBrowser(
+            String method,
+            String path,
+            String cookie,
+            String csrf,
+            String origin,
+            String host,
+            String requestId) throws IOException, InterruptedException {
+        return sendBrowser(method, path, cookie, csrf, origin, host, requestId, null);
+    }
+
+    private HttpResponse<String> sendBrowser(
+            String method,
+            String path,
+            String cookie,
+            String csrf,
+            String origin,
+            String host,
+            String requestId,
+            String body) throws IOException, InterruptedException {
+        byte[] bytes = body == null ? null : body.getBytes(StandardCharsets.UTF_8);
+        HttpRequest.Builder builder = HttpRequest.newBuilder().uri(URI.create(server.origin() + path))
+                .timeout(Duration.ofSeconds(3)).header("Host", host)
+                .header("X-Request-Id", requestId).header("Origin", origin)
+                .method(method, bytes == null ? HttpRequest.BodyPublishers.noBody()
+                        : HttpRequest.BodyPublishers.ofByteArray(bytes));
+        if (cookie != null) builder.header("Cookie", cookie);
+        if (csrf != null) builder.header("X-LedgerX-CSRF", csrf);
+        if (bytes != null) builder.header("Content-Type", "application/json");
+        return CLIENT.send(builder.build(), HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+    }
+
     private HttpRequest request(
             String method,
             String path,
@@ -363,16 +444,14 @@ class LedgerHttpServerTest {
                 .timeout(Duration.ofSeconds(3))
                 .method(method, publisher)
                 .header("Host", host);
+        if (token != null) BrowserTestSession.forServer(server).apply(builder);
         if (contentType != null) {
             builder.header("Content-Type", contentType);
-        }
-        if (token != null) {
-            builder.header("Authorization", "Bearer " + token);
         }
         if (requestId != null) {
             builder.header("X-Request-Id", requestId);
         }
-        if (origin != null) {
+        if (origin != null && token == null) {
             builder.header("Origin", origin);
         }
         return builder.build();

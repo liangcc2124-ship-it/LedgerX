@@ -5,22 +5,26 @@
     <modelVersion>4.0.0</modelVersion>
 
     <groupId>com.ledgerx</groupId>
-    <artifactId>ledgerx-desktop</artifactId>
+    <artifactId>ledgerx-local-web</artifactId>
     <version>0.1.0-SNAPSHOT</version>
-    <name>LedgerX Desktop</name>
-    <description>Java 11 backend foundation for LedgerX</description>
+    <name>LedgerX Local Web</name>
+    <description>Local browser application with Java 11 and SQLite</description>
 
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
 
         <maven.compiler.release>11</maven.compiler.release>
-        <maven.compiler.plugin.version>3.13.0</maven.compiler.plugin.version>
-        <maven.surefire.plugin.version>3.5.2</maven.surefire.plugin.version>
+        <maven.clean.plugin.version>3.5.0</maven.clean.plugin.version>
+        <maven.resources.plugin.version>3.5.0</maven.resources.plugin.version>
+        <maven.jar.plugin.version>3.5.1</maven.jar.plugin.version>
+        <maven.compiler.plugin.version>3.16.0</maven.compiler.plugin.version>
+        <maven.surefire.plugin.version>3.6.0</maven.surefire.plugin.version>
         <maven.dependency.plugin.version>3.10.0</maven.dependency.plugin.version>
         <jackson.version>2.21.0</jackson.version>
         <sqlite.jdbc.version>3.53.4.0</sqlite.jdbc.version>
         <junit.version>5.11.4</junit.version>
+        <ledgerx.build.directory>${project.basedir}/target</ledgerx.build.directory>
     </properties>
 
     <dependencyManagement>
@@ -55,12 +59,14 @@
     </dependencies>
 
     <build>
+        <directory>${ledgerx.build.directory}</directory>
         <resources>
             <resource>
                 <directory>src/main/resources</directory>
                 <filtering>false</filtering>
                 <excludes>
                     <exclude>build.properties</exclude>
+                    <exclude>web/**</exclude>
                 </excludes>
             </resource>
             <resource>
@@ -74,6 +80,43 @@
         <plugins>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-clean-plugin</artifactId>
+                <version>${maven.clean.plugin.version}</version>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-resources-plugin</artifactId>
+                <version>${maven.resources.plugin.version}</version>
+                <configuration>
+                    <encoding>${project.build.sourceEncoding}</encoding>
+                    <propertiesEncoding>${project.build.sourceEncoding}</propertiesEncoding>
+                </configuration>
+                <executions>
+                    <execution>
+                        <id>include-built-vue-application</id>
+                        <phase>process-resources</phase>
+                        <goals>
+                            <goal>copy-resources</goal>
+                        </goals>
+                        <configuration>
+                            <outputDirectory>${project.build.outputDirectory}/web</outputDirectory>
+                            <resources>
+                                <resource>
+                                    <directory>${project.basedir}/frontend/dist</directory>
+                                    <filtering>false</filtering>
+                                    <includes>
+                                        <include>index.html</include>
+                                        <include>manifest.properties</include>
+                                        <include>assets/**</include>
+                                    </includes>
+                                </resource>
+                            </resources>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
                 <version>${maven.compiler.plugin.version}</version>
                 <configuration>
@@ -84,6 +127,9 @@
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-surefire-plugin</artifactId>
                 <version>${maven.surefire.plugin.version}</version>
+                <configuration>
+                    <argLine>-Djdk.httpclient.allowRestrictedHeaders=host</argLine>
+                </configuration>
             </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
@@ -91,17 +137,36 @@
                 <version>${maven.dependency.plugin.version}</version>
                 <executions>
                     <execution>
-                        <id>write-runtime-classpath</id>
+                        <id>copy-runtime-dependencies</id>
                         <phase>package</phase>
                         <goals>
-                            <goal>build-classpath</goal>
+                            <goal>copy-dependencies</goal>
                         </goals>
                         <configuration>
-                            <outputFile>${project.build.directory}/cp.txt</outputFile>
+                            <outputDirectory>${project.build.directory}/runtime/lib</outputDirectory>
                             <includeScope>runtime</includeScope>
+                            <useRepositoryLayout>false</useRepositoryLayout>
                         </configuration>
                     </execution>
                 </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-jar-plugin</artifactId>
+                <version>${maven.jar.plugin.version}</version>
+                <configuration>
+                    <archive>
+                        <manifest>
+                            <mainClass>com.ledgerx.http.HttpServerMain</mainClass>
+                            <addClasspath>true</addClasspath>
+                            <classpathPrefix>runtime/lib/</classpathPrefix>
+                        </manifest>
+                        <manifestEntries>
+                            <Implementation-Title>LedgerX Local Web</Implementation-Title>
+                            <Implementation-Version>${project.version}</Implementation-Version>
+                        </manifestEntries>
+                    </archive>
+                </configuration>
             </plugin>
         </plugins>
     </build>

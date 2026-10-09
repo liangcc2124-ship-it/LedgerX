@@ -1,5 +1,7 @@
 # desktop-shell 模块规格（Electron）
 
+> 历史规格：当前产品不再使用桌面壳，见 [ADR-014](../decisions/ADR-014-local-browser-only.md) 和 [P7-004](../tasks/P7-004-local-browser-runtime.md)。下文不得作为新任务或发布验收依据。
+
 - 状态：可实施基础设施部分；发布版本/签名仍待发布任务决定
 - 引用：[需求](../requirements.md)、[架构 §5/§8](../architecture.md)、[全局 API](../api.md)、[ADR-004](../decisions/ADR-004-vue-electron-local-rest.md)、[ADR-006](../decisions/ADR-006-electron-forge-6-4-2-audit.md)
 

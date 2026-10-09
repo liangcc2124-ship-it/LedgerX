@@ -1,5 +1,7 @@
 # LedgerX WPF 视觉系统
 
+> **历史视觉参考**：本文属于 WPF/旧版设计基准。Vue 迁移可参考视觉语言，但 DOM、组件和 Electron 安全边界以当前 [架构](../architecture.md) 与 [ui-integration](../modules/ui-integration.md) 为准，不要求像素级复刻。
+
 ## 设计基准
 
 - 参考图：`docs/design/ledgerx-warm-copper-reference.png`

@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ledgerx.application.bootstrap.ApplicationBootstrap;
 import com.ledgerx.application.bootstrap.ApplicationRuntime;
 import com.ledgerx.application.profile.ProfileMutation;
+import com.ledgerx.testsupport.LedgerTestSupport;
 import com.ledgerx.persistence.SqliteDatabase;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -30,30 +31,31 @@ class SettingsApplicationServiceTest {
     @Test
     void settingsAreIsolatedPersistedAndReplayTheOriginalResponse(@TempDir Path temp) throws Exception {
         ApplicationRuntime runtime = ApplicationBootstrap.runtimeFromDirectory(temp, "test", CLOCK);
+        LedgerTestSupport.initializeLedger(runtime, UUID.randomUUID().toString(), "9");
         String firstProfileId = runtime.current().getActiveProfileId();
         SettingsApiResult initial = runtime.read();
-        assertEquals("\"0\"", initial.getEtag());
+        assertEquals("\"1\"", initial.getEtag());
         assertEquals("3000.00", JSON.readTree(initial.getResponseJson()).at("/data/safetyBuffer/amount").asText());
 
         String updateKey = "0e93c919-9e26-4ca0-9c07-89d886b53683";
         SettingsPatch patch = new SettingsPatch(true, false, 14, 20, "ACCOUNTS", 300001L, true, "GRAPHITE");
-        SettingsApiResult updated = runtime.update(0L, patch, mutation(updateKey, "a"));
+        SettingsApiResult updated = runtime.update(1L, patch, mutation(updateKey, "a"));
         JsonNode updatedJson = JSON.readTree(updated.getResponseJson());
-        assertEquals("\"1\"", updated.getEtag());
-        assertEquals(1L, updatedJson.at("/data/revision").asLong());
-        assertEquals(1L, updatedJson.at("/meta/dataRevision").asLong());
+        assertEquals("\"2\"", updated.getEtag());
+        assertEquals(2L, updatedJson.at("/data/revision").asLong());
+        assertEquals(2L, updatedJson.at("/meta/dataRevision").asLong());
         assertEquals("3000.01", updatedJson.at("/data/safetyBuffer/amount").asText());
         assertEquals("GRAPHITE", updatedJson.at("/data/themeName").asText());
 
-        SettingsApiResult replay = runtime.update(0L, patch, mutation(updateKey, "a"));
+        SettingsApiResult replay = runtime.update(1L, patch, mutation(updateKey, "a"));
         assertEquals(updated.getResponseJson(), replay.getResponseJson());
         assertEquals(updated.getEtag(), replay.getEtag());
 
-        SettingsApiResult noOp = runtime.update(1L,
+        SettingsApiResult noOp = runtime.update(2L,
                 new SettingsPatch(null, null, null, null, null, null, true, null), mutation(
                         "55d1e57f-d5c3-4fd2-a65b-0a5012c0d36c", "b"));
-        assertEquals("\"1\"", noOp.getEtag());
-        assertEquals(1L, JSON.readTree(noOp.getResponseJson()).at("/meta/dataRevision").asLong());
+        assertEquals("\"2\"", noOp.getEtag());
+        assertEquals(2L, JSON.readTree(noOp.getResponseJson()).at("/meta/dataRevision").asLong());
 
         Path firstLedger = temp.resolve("Profiles").resolve(firstProfileId).resolve("ledger.db");
         try (Connection connection = new SqliteDatabase(firstLedger).open();
@@ -71,19 +73,20 @@ class SettingsApplicationServiceTest {
             assertEquals(300001L, setting.getLong("safety_buffer_minor"));
             assertEquals(1, setting.getInt("hide_all_amounts"));
             assertEquals("GRAPHITE", setting.getString("theme_name"));
-            assertEquals(1L, setting.getLong("revision"));
+            assertEquals(2L, setting.getLong("revision"));
             assertFalse(setting.next());
             try (ResultSet operations = statement.executeQuery("SELECT COUNT(*) FROM processed_operation")) {
                 assertTrue(operations.next());
-                assertEquals(2, operations.getInt(1));
+                assertEquals(3, operations.getInt(1));
             }
         }
 
         String secondProfileId = UUID.randomUUID().toString();
         runtime.create(secondProfileId, "第二空间", profileMutation(
                 "d52103c7-7a9d-4654-94a5-0a119faf579b", "/api/v1/profiles", "c"));
+        LedgerTestSupport.initializeLedger(runtime, UUID.randomUUID().toString(), "8");
         SettingsApiResult secondProfile = runtime.read();
-        assertEquals("\"0\"", secondProfile.getEtag());
+        assertEquals("\"1\"", secondProfile.getEtag());
         assertEquals(false, JSON.readTree(secondProfile.getResponseJson()).at("/data/notificationsEnabled").asBoolean());
 
         runtime.activate(firstProfileId, 1L, profileMutation(
@@ -98,25 +101,26 @@ class SettingsApplicationServiceTest {
     @Test
     void invalidAndStaleSettingsWritesDoNotCreateOperations(@TempDir Path temp) throws Exception {
         ApplicationRuntime runtime = ApplicationBootstrap.runtimeFromDirectory(temp, "test", CLOCK);
+        LedgerTestSupport.initializeLedger(runtime, UUID.randomUUID().toString(), "9");
         String profileId = runtime.current().getActiveProfileId();
-        SettingsException invalid = assertThrows(SettingsException.class, () -> runtime.update(0L,
+        SettingsException invalid = assertThrows(SettingsException.class, () -> runtime.update(1L,
                 new SettingsPatch(null, null, 0, null, null, null, null, null), mutation(
                         "ecd0081b-4c4e-4a09-84fe-98e28632af9f", "e")));
         assertEquals(400, invalid.getHttpStatus());
 
-        runtime.update(0L, new SettingsPatch(null, null, null, null, null, null, true, null), mutation(
+        runtime.update(1L, new SettingsPatch(null, null, null, null, null, null, true, null), mutation(
                 "fc1b9ca3-d96f-44dc-945b-a51b9ab26e9f", "f"));
-        SettingsException stale = assertThrows(SettingsException.class, () -> runtime.update(0L,
+        SettingsException stale = assertThrows(SettingsException.class, () -> runtime.update(1L,
                 new SettingsPatch(null, null, null, null, null, null, false, null), mutation(
                         "b1fe6728-d1f8-4115-9d75-086e4ce7fe9b", "0")));
         assertEquals(409, stale.getHttpStatus());
-        assertEquals(1L, stale.getDetails().get("currentRevision"));
+        assertEquals(2L, stale.getDetails().get("currentRevision"));
 
         Path ledger = temp.resolve("Profiles").resolve(profileId).resolve("ledger.db");
         try (Connection connection = new SqliteDatabase(ledger).open(); Statement statement = connection.createStatement();
                 ResultSet operations = statement.executeQuery("SELECT COUNT(*) FROM processed_operation")) {
             assertTrue(operations.next());
-            assertEquals(1, operations.getInt(1));
+            assertEquals(2, operations.getInt(1));
         }
     }
 

@@ -9,29 +9,25 @@ npm run build
 npm test
 ```
 
-## 在浏览器中运行真实网页版
+## 启动正式本机网页版
 
-网页版复用 Java/SQLite 本地服务。先在项目根目录构建 Java，并在一个 PowerShell 窗口启动后端：
-
-```powershell
-$env:LEDGERX_SESSION_TOKEN = node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"
-$env:LEDGERX_DATA_DIR = "$env:TEMP\LedgerX-Web"
-java -cp ".\target\classes;$(Get-Content -Raw .\target\cp.txt)" com.ledgerx.http.HttpServerMain
-```
-
-记录后端输出的 `LEDGERX_READY` 端口和启动时生成的 token，在第二个 PowerShell 窗口启动前端代理：
+在 Windows PowerShell 7 中安装 Java 11+ 与满足 Vite 版本要求的 Node.js。首次准备或修改代码时安装锁定依赖、运行回归并构建：
 
 ```powershell
-$env:LEDGERX_DEV_API_ORIGIN = 'http://127.0.0.1:<后端端口>'
-$env:LEDGERX_DEV_API_TOKEN = '<上一个窗口的 token>'
-Set-Location frontend
-npm run dev -- --host 127.0.0.1 --port 5173
+cd frontend
+npm ci
+npm test
+cd ..
+.\scripts\build-web.ps1
+.\scripts\start-local.ps1
 ```
 
-然后打开 `http://127.0.0.1:5173/`。两项服务都只绑定本机回环地址，数据目录可替换为独立的验收目录；退出后端和前端窗口即可停止网页版。
+日常使用时只运行 `scripts/start-local.ps1`。Java 会在同一 loopback origin 上提供 Vue 页面与 `/api/v1`，并尝试打开系统浏览器。首次打开新账本时，先确认账本起始日和默认账户期初余额；历史账本若需校正，会先展示待确认账户日期。关闭标签页不会停止 Java 服务，使用启动终端中的 `Ctrl+C` 退出。当前只面向个人本机运行，不制作安装器或分享包；简单构建与验收约定见 [P7-003](../docs/tasks/P7-003-reproducible-release-gate.md)。
 
-网页版沿用旧版的工作台布局：左侧为 LedgerX 导航栏，右侧为宽内容区；READY 后可从导航进入首页、用户空间、分类与账户、收支记录和设置。页面只展示本地服务实际返回的状态，不在首页填充虚构的财务指标。收支记录的新增和编辑使用弹窗表单，取消或关闭不会写入数据。
+网页版沿用旧版的工作台布局：左侧为 LedgerX 导航栏，右侧为宽内容区；READY 后可从导航进入财务总览、指标与公式、用户空间、分类与账户、收支记录和设置。财务总览只使用 `/api/v1/dashboard` 返回的日/周/月/年数据；编辑布局时才生成本地草稿，使用精确锁定的 `gridstack@13.3.0` 官方 Vue 包装层完成鼠标拖动与缩放，保存使用 layout ETag 和幂等键。指标页通过结构化 AST 发送中文函数提示，支持创建/编辑/归档、系统指标显示设置和版本历史，不在浏览器执行财务计算。收支记录的新增和编辑使用弹窗表单，取消或关闭不会写入数据。
 
-开发代理只从 Node 环境读取 `LEDGERX_DEV_API_ORIGIN` 和 `LEDGERX_DEV_API_TOKEN`，并在代理层注入认证。origin 必须是带显式端口的 `http://127.0.0.1:<1..65535>`（可有一个末尾 `/`），token 必须是 43 位 `[A-Za-z0-9_-]`；两者都为空时不创建代理，不能使用 `localhost`、远程 URL、`.env` 提交内容或 `VITE_*` 变量。代理键固定为 `/api/v1`，Vue bundle 不读取 token、端口或 Electron IPC。
+设置页可为当前用户空间创建、查看、校验和下载 SQLite 一致性备份；Java 会先完成数据库与文件完整性检查，再显示为可用。备份同时保存在本机数据目录的 `Backups/<用户空间 ID>/`，也可以下载到浏览器选择的位置。备份文件**没有加密**，请将下载副本保存在可信的独立位置。当前版本不提供恢复、自动备份或自动清理；不要直接复制运行中的 `ledger.db`。
 
-生产构建不创建开发代理，也不会把这些变量写入 bundle；使用 self-only CSP，默认不生成 source map。`npm test` 会先运行不发起网络请求的 Node 配置测试，再构建并运行浏览器回归。
+`npm run dev` 的 Vite Bearer 代理只留作迁移期开发/兼容测试，不是正式产品入口或验收路径；正式运行必须使用 Java 同源服务及浏览器 Cookie/CSRF 会话，详见 [P7-004](../docs/tasks/P7-004-local-browser-runtime.md)。
+
+生产构建不创建开发代理，也不会把凭据写入 bundle；使用 self-only CSP，默认不生成 source map。Profiles、Catalog 与 Records 的读取/写入通过 `src/composables/useAsyncResource.js` 和 `useApiMutation.js` 统一处理竞态、cursor 分页、15 秒超时、同幂等键重试和 operation 查询；创建、编辑与确认操作使用 `src/components/common/AppDialog.vue`，统一焦点圈、Escape、背景滚动锁和焦点恢复。指标编辑器使用 `FormulaNodeEditor.vue` 递归维护 external AST，`ReferencePicker.vue` 提供指标/分类/账户/时间引用，`FormulaVersionHistory.vue` 按游标读取历史；validate/preview 的字段错误会定位到 AST 节点且不执行浏览器端求值。Dashboard 只有具备 `dashboard.layout.write` 时才显示布局写入口，非编辑网格使用 GridStack 公共 `sizeToContent`/`resizeToContent` 自动容纳卡片内容，期间导航锚点使用服务端返回值。应用壳 hash 白名单为 `home|records|catalog|metrics|profiles|settings`，页面枚举显示统一由 `src/presentationMaps.js` 转为中文，未知值保留原值诊断。`npm test` 会先运行 Node 配置测试，再构建并运行浏览器回归；SQLite 集成 E2E 由 `node scripts/local-browser-e2e.mjs` 从项目根目录运行。

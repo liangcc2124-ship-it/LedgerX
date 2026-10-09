@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test } from './test-fixture.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -25,7 +25,14 @@ test('catalog page reads both resources and sends a minimal category create body
   await page.getByRole('button', { name: '分类与账户' }).click();
   await expect(page.getByRole('heading', { name: '分类与账户' })).toBeFocused();
   await expect(page.getByText('现金储备')).toBeVisible();
-  await page.getByRole('button', { name: '新增分类' }).click();
+  const createCategoryButton = page.getByRole('button', { name: '新增分类' });
+  await createCategoryButton.click();
+  await expect(page.getByRole('dialog')).toBeVisible();
+  await expect(page.locator('#category-name')).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await expect(createCategoryButton).toBeFocused();
+  await createCategoryButton.click();
   await page.getByLabel('名称').fill('测试分类');
   await page.getByRole('button', { name: '保存' }).click();
   await expect(page.getByText('分类已创建。')).toBeVisible();

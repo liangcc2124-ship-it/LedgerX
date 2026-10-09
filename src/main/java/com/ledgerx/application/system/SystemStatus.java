@@ -14,6 +14,8 @@ public final class SystemStatus {
     private final String state;
     private final List<String> capabilities;
     private final Long dataRevision;
+    private final String setupState;
+    private final String ledgerStartOn;
 
     public SystemStatus(
             String apiVersion,
@@ -24,6 +26,21 @@ public final class SystemStatus {
             String state,
             List<String> capabilities,
             Long dataRevision) {
+        this(apiVersion, applicationVersion, schemaVersion, backupFormatVersion, activeProfileId, state,
+                capabilities, dataRevision, null, null);
+    }
+
+    public SystemStatus(
+            String apiVersion,
+            String applicationVersion,
+            Integer schemaVersion,
+            int backupFormatVersion,
+            String activeProfileId,
+            String state,
+            List<String> capabilities,
+            Long dataRevision,
+            String setupState,
+            String ledgerStartOn) {
         this.apiVersion = apiVersion;
         this.applicationVersion = applicationVersion;
         this.schemaVersion = schemaVersion;
@@ -32,6 +49,8 @@ public final class SystemStatus {
         this.state = state;
         this.capabilities = Collections.unmodifiableList(new ArrayList<>(capabilities));
         this.dataRevision = dataRevision;
+        this.setupState = setupState;
+        this.ledgerStartOn = ledgerStartOn;
     }
 
     public String getApiVersion() {
@@ -65,4 +84,8 @@ public final class SystemStatus {
     public Long getDataRevision() {
         return dataRevision;
     }
+
+    public String getSetupState() { return setupState; }
+
+    public String getLedgerStartOn() { return ledgerStartOn; }
 }

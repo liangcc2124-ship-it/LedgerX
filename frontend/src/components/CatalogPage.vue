@@ -1,6 +1,10 @@
 <script setup>
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { ApiClientError, createRequestId, requestApiJson } from '../apiClient.js';
+import { accountKindLabel, balanceSideLabel, entityStatusLabel } from '../presentationMaps.js';
+import AppDialog from './common/AppDialog.vue';
+import { useApiMutation } from '../composables/useApiMutation.js';
+import { useAsyncResource } from '../composables/useAsyncResource.js';
 
 const categories = ref([]);
 const accounts = ref([]);
@@ -22,17 +26,23 @@ const confirmingMerge = ref(false);
 const mutationState = ref({ kind: 'idle', message: '' });
 const pendingMutation = ref(null);
 const writesDisabled = ref(false);
+const categoryResource = useAsyncResource((context) => loadCatalogData('categories', context));
+const accountResource = useAsyncResource((context) => loadCatalogData('accounts', context));
+const apiMutation = useApiMutation();
+const loadRuns = { categories: 0, accounts: 0 };
 
 const categoryParents = computed(() => categories.value.filter((item) => item.status === 'ACTIVE' && item.parentId === null));
 const visibleCategories = computed(() => categories.value);
 const visibleAccounts = computed(() => accounts.value);
 const mergeSources = computed(() => categories.value.filter((item) => item.status === 'ACTIVE' && !item.isSystem));
 const mergeTargets = computed(() => categories.value.filter((item) => item.status === 'ACTIVE' && item.canUseForRecords === true && item.id !== mergeSourceId.value && item.parentId !== mergeSourceId.value));
-
-let categoryGeneration = 0;
-let accountGeneration = 0;
-let categoryController = null;
-let accountController = null;
+const archiveTarget = computed(() => {
+  const target = confirmingArchive.value;
+  if (!target) return null;
+  const collection = target.kind === 'category' ? categories.value : accounts.value;
+  const item = collection.find((entry) => entry.id === target.id);
+  return item ? { ...target, item } : null;
+});
 
 function isUuid(value) { return typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(value); }
 function isMoney(value) { return typeof value === 'string' && /^-?(0|[1-9][0-9]*)\.[0-9]{2}$/.test(value); }
@@ -66,24 +76,36 @@ function errorMessage(error) {
   if (error.status === 409 || error.status === 428) return '数据已被其他操作更新，请刷新后重试。';
   return error.message || '本地服务暂时不可用，请重试。';
 }
-function cancelRead(kind) { (kind === 'categories' ? categoryController : accountController)?.abort(); }
+async function loadCatalogData(kind, { signal, input }) {
+  const append = Boolean(input?.append);
+  const page = kind === 'categories' ? categoryPage.value : accountPage.value;
+  const params = new URLSearchParams({ includeArchived: String(includeArchived.value), limit: '200' });
+  if (append && input?.cursor) params.set('cursor', input.cursor);
+  const result = await requestApiJson(`/api/v1/${kind}?${params.toString()}`, { signal });
+  return parseList(result, kind);
+}
+
 async function load(kind, { append = false } = {}) {
-  const generation = kind === 'categories' ? ++categoryGeneration : ++accountGeneration; cancelRead(kind);
-  const controller = new AbortController(); if (kind === 'categories') categoryController = controller; else accountController = controller;
-  const timeout = setTimeout(() => controller.abort(), 15000); loading.value = { ...loading.value, [kind]: true }; errors.value = { ...errors.value, [kind]: '' };
-  const page = kind === 'categories' ? categoryPage.value : accountPage.value; const params = new URLSearchParams({ includeArchived: String(includeArchived.value), limit: '200' });
-  if (append && page.nextCursor) params.set('cursor', page.nextCursor);
+  const run = ++loadRuns[kind];
+  loading.value = { ...loading.value, [kind]: true };
+  errors.value = { ...errors.value, [kind]: '' };
+  const resource = kind === 'categories' ? categoryResource : accountResource;
+  const page = kind === 'categories' ? categoryPage.value : accountPage.value;
+  const queryKey = `includeArchived=${includeArchived.value}`;
   try {
-    const result = await requestApiJson(`/api/v1/${kind}?${params.toString()}`, { signal: controller.signal });
-    if (generation !== (kind === 'categories' ? categoryGeneration : accountGeneration)) return;
-    const parsed = parseList(result, kind); const target = kind === 'categories' ? categories : accounts; const known = new Set(target.value.map((item) => item.id));
-    const incoming = append ? parsed.items.filter((item) => !known.has(item.id)) : parsed.items; target.value = append ? [...target.value, ...incoming] : incoming;
-    if (kind === 'categories') categoryPage.value = { nextCursor: parsed.nextCursor, hasMore: parsed.hasMore }; else accountPage.value = { nextCursor: parsed.nextCursor, hasMore: parsed.hasMore };
+    const parsed = await resource.execute({ mode: append ? 'append' : 'replace', input: { append, cursor: append ? page.nextCursor : null, queryKey } });
+    if (!parsed) return;
+    const target = kind === 'categories' ? categories : accounts;
+    const known = new Set(target.value.map((item) => item.id));
+    const incoming = append ? parsed.items.filter((item) => !known.has(item.id)) : parsed.items;
+    target.value = append ? [...target.value, ...incoming] : incoming;
+    if (kind === 'categories') categoryPage.value = { nextCursor: parsed.nextCursor, hasMore: parsed.hasMore };
+    else accountPage.value = { nextCursor: parsed.nextCursor, hasMore: parsed.hasMore };
   } catch (error) {
-    if (generation !== (kind === 'categories' ? categoryGeneration : accountGeneration)) return;
-    errors.value = { ...errors.value, [kind]: error?.code === 'REQUEST_ABORTED' && controller.signal.aborted ? `${kind === 'categories' ? '分类' : '账户'}读取超时，请重试。` : errorMessage(error) };
+    if (error?.code === 'REQUEST_ABORTED') return;
+    errors.value = { ...errors.value, [kind]: error?.code === 'REQUEST_TIMEOUT' ? `${kind === 'categories' ? '分类' : '账户'}读取超时，请重试。` : errorMessage(error) };
   } finally {
-    clearTimeout(timeout); if (kind === 'categories' && categoryController === controller) categoryController = null; if (kind === 'accounts' && accountController === controller) accountController = null; loading.value = { ...loading.value, [kind]: false };
+    if (run === loadRuns[kind]) loading.value = { ...loading.value, [kind]: false };
   }
 }
 function reload() { categoryPage.value = { nextCursor: null, hasMore: false }; accountPage.value = { nextCursor: null, hasMore: false }; void load('categories'); void load('accounts'); }
@@ -102,30 +124,44 @@ function mutationSuccessMessage(pending) {
   if (pending.request.method === 'PUT') return `${resource}已更新。`;
   return `${resource}已归档。`;
 }
-async function runMutation(pending) {
-  if (!pending) return; mutationState.value = { kind: 'loading', message: '正在保存…' }; const controller = new AbortController(); const timeout = setTimeout(() => controller.abort(), 30000);
+async function runMutation(pending, { retrySame = false } = {}) {
+  if (!pending) return;
+  mutationState.value = { kind: 'loading', message: '正在保存…' };
   try {
-    await requestApiJson(pending.request.path, { method: pending.request.method, body: pending.request.body, ifMatch: pending.request.ifMatch, idempotencyKey: pending.request.idempotencyKey, signal: controller.signal });
-    pendingMutation.value = null; mutationState.value = { kind: 'success', message: mutationSuccessMessage(pending) }; confirmingArchive.value = null; confirmingMerge.value = false; mergeForm.value = false; cancelForms();
-    if (pending.action === 'category' || pending.action === 'merge') await load('categories'); if (pending.action === 'account') await load('accounts');
+    const result = await (retrySame ? apiMutation.retrySame() : apiMutation.submit(pending.request));
+    if (!result) return;
+    pendingMutation.value = null;
+    mutationState.value = { kind: 'success', message: mutationSuccessMessage(pending) };
+    confirmingArchive.value = null; confirmingMerge.value = false; mergeForm.value = false; cancelForms();
+    if (pending.action === 'category' || pending.action === 'merge') await load('categories');
+    if (pending.action === 'account') await load('accounts');
   } catch (error) {
-    if (error.status === 423) writesDisabled.value = true; if (error.status === 409 || error.status === 428) pendingMutation.value = null;
-    mutationState.value = { kind: 'error', message: error.code === 'REQUEST_ABORTED' ? '提交结果待确认：请查询结果或使用相同请求重试。' : errorMessage(error) };
-    if (error.fieldErrors?.name) categoryFieldError.value = String(error.fieldErrors.name); if (error.fieldErrors?.openingBalance) accountFieldError.value = String(error.fieldErrors.openingBalance);
-  } finally { clearTimeout(timeout); }
+    if (error.status === 423) writesDisabled.value = true;
+    mutationState.value = { kind: 'error', message: error.code === 'MUTATION_PENDING' ? '提交结果待确认：请查询操作结果或使用相同请求重试。' : errorMessage(error) };
+    if (error.fieldErrors?.name) categoryFieldError.value = String(error.fieldErrors.name);
+    if (error.fieldErrors?.openingBalance) accountFieldError.value = String(error.fieldErrors.openingBalance);
+  }
 }
-function retryPending() { if (pendingMutation.value) void runMutation(pendingMutation.value); }
+function retryPending() { if (pendingMutation.value) void runMutation(pendingMutation.value, { retrySame: true }); }
 async function queryPendingOperation() {
-  if (!pendingMutation.value) return; mutationState.value = { kind: 'loading', message: '正在查询操作结果…' };
-  try { const result = await requestApiJson(`/api/v1/operations/${encodeURIComponent(pendingMutation.value.request.idempotencyKey)}`); if (result.payload?.data?.status !== 'COMPLETED') { mutationState.value = { kind: 'error', message: '操作尚未完成，请稍后查询。' }; return; } const action = pendingMutation.value.action; pendingMutation.value = null; mutationState.value = { kind: 'success', message: '保存成功。' }; if (action === 'category' || action === 'merge') await load('categories'); else await load('accounts'); }
-  catch (error) { mutationState.value = { kind: 'error', message: error.status === 404 ? '暂未找到操作结果，请稍后查询。' : errorMessage(error) }; }
+  if (!pendingMutation.value) return;
+  const pending = pendingMutation.value;
+  mutationState.value = { kind: 'loading', message: '正在查询操作结果…' };
+  try {
+    const result = await apiMutation.queryOperation();
+    if (result?.payload?.data?.status !== 'COMPLETED') { mutationState.value = { kind: 'error', message: '操作尚未完成，请稍后查询。' }; return; }
+    pendingMutation.value = null;
+    mutationState.value = { kind: 'success', message: mutationSuccessMessage(pending) };
+    confirmingArchive.value = null; confirmingMerge.value = false; mergeForm.value = false; cancelForms();
+    if (pending.action === 'category' || pending.action === 'merge') await load('categories'); else await load('accounts');
+  } catch (error) { mutationState.value = { kind: 'error', message: error.status === 404 ? '暂未找到操作结果，请稍后查询。' : errorMessage(error) }; }
 }
 async function saveCategory() {
   const form = categoryForm.value; const name = form.name.trim(); if (Array.from(name).length < 1 || Array.from(name).length > 100) { categoryFieldError.value = '分类名称长度必须为 1 到 100 个字符。'; return; }
   if (form.parentId && !categoryParents.value.some((item) => item.id === form.parentId)) { categoryFieldError.value = '父分类必须是当前活动顶级分类。'; return; }
   const creating = !form.id; beginMutation('category', { method: creating ? 'POST' : 'PUT', path: creating ? '/api/v1/categories' : `/api/v1/categories/${form.id}`, body: { ...(creating ? { id: createRequestId() } : {}), name, parentId: form.parentId || null }, ifMatch: creating ? undefined : `"${form.revision}"`, idempotencyKey: createRequestId() });
 }
-function askArchive(kind, item) { if (writesDisabled.value || item.isSystem || item.status !== 'ACTIVE') return; confirmingArchive.value = { kind, id: item.id }; }
+function askArchive(kind, item) { if (writesDisabled.value || mutationState.value.kind === 'loading' || item.isSystem || item.status !== 'ACTIVE') return; confirmingArchive.value = { kind, id: item.id }; }
 function cancelArchive() { confirmingArchive.value = null; }
 function confirmArchive(kind, item) { if (!confirmingArchive.value || confirmingArchive.value.kind !== kind || confirmingArchive.value.id !== item.id) return; beginMutation(kind, { method: 'DELETE', path: `/api/v1/${kind === 'category' ? 'categories' : 'accounts'}/${item.id}`, ifMatch: `"${item.revision}"`, idempotencyKey: createRequestId() }); }
 async function saveAccount() {
@@ -138,7 +174,7 @@ function cancelMerge() { mergeForm.value = false; confirmingMerge.value = false;
 function askMerge() { if (mergeSourceId.value && mergeTargetId.value && mergeSourceId.value !== mergeTargetId.value) confirmingMerge.value = true; }
 function confirmMerge() { if (!confirmingMerge.value) return; const source = categories.value.find((item) => item.id === mergeSourceId.value); const target = categories.value.find((item) => item.id === mergeTargetId.value); if (!source || !target) return; beginMutation('merge', { method: 'POST', path: `/api/v1/categories/${target.id}/merge`, body: { sources: [{ id: source.id, expectedRevision: source.revision }] }, ifMatch: `"${target.revision}"`, idempotencyKey: createRequestId() }); }
 onMounted(reload);
-onUnmounted(() => { categoryGeneration += 1; accountGeneration += 1; cancelRead('categories'); cancelRead('accounts'); });
+onUnmounted(() => { loadRuns.categories += 1; loadRuns.accounts += 1; });
 </script>
 
 <template>
@@ -146,13 +182,35 @@ onUnmounted(() => { categoryGeneration += 1; accountGeneration += 1; cancelRead(
     <div class="catalog-heading"><div><h2 id="catalog-page-title" tabindex="-1">分类与账户</h2><p>管理收支记录使用的分类和资金账户。</p></div><label class="archived-toggle"><input v-model="includeArchived" type="checkbox" @change="toggleArchived"> 显示已归档</label></div>
     <p v-if="mutationState.kind !== 'idle'" class="catalog-message" :class="`message-${mutationState.kind}`" role="status">{{ mutationState.message }}<button v-if="mutationState.kind === 'error' && pendingMutation" type="button" @click="retryPending">使用相同请求重试</button><button v-if="mutationState.kind === 'error' && pendingMutation" type="button" @click="queryPendingOperation">查询结果</button></p>
     <div class="catalog-columns">
-      <section class="catalog-card" aria-labelledby="categories-title"><div class="section-heading"><h3 id="categories-title">分类</h3><div class="row-actions"><button type="button" :disabled="writesDisabled" @click="startCategory()">新增分类</button><button type="button" :disabled="writesDisabled" @click="openMerge">合并来源</button></div></div><div v-if="loading.categories && !categories.length" class="catalog-state" role="status">正在读取分类…</div><div v-else-if="errors.categories" class="catalog-state catalog-error" role="alert">{{ errors.categories }} <button type="button" @click="load('categories')">重试</button></div><ul v-else class="catalog-list"><li v-for="category in visibleCategories" :key="category.id" :class="{ child: category.parentId }"><div><strong>{{ category.name }}</strong><span>{{ categoryParentName(category) }} · {{ category.isSystem ? '系统' : '自定义' }} · {{ category.canUseForRecords ? '可用于记录' : '仅分组' }} · {{ category.status }}</span></div><div class="row-actions"><button v-if="!category.isSystem && category.status === 'ACTIVE'" type="button" :disabled="writesDisabled" @click="startCategory(category)">编辑</button><button v-if="!category.isSystem && category.status === 'ACTIVE'" type="button" :disabled="writesDisabled" @click="askArchive('category', category)">归档</button><div v-if="confirmingArchive?.kind === 'category' && confirmingArchive.id === category.id" class="confirm-actions" role="group" :aria-label="`确认归档 ${category.name}`"><span>归档后不可恢复。</span><button type="button" :disabled="writesDisabled" @click="confirmArchive('category', category)">确认归档</button><button type="button" @click="cancelArchive">取消</button></div></div></li></ul>
-        <form v-if="categoryForm" class="inline-form" @submit.prevent="saveCategory"><h4>{{ categoryForm.id ? '编辑分类' : '新增分类' }}</h4><label>名称<input v-model="categoryForm.name" maxlength="100" autofocus :aria-invalid="categoryFieldError ? 'true' : 'false'"></label><p v-if="categoryFieldError" class="field-error" role="alert">{{ categoryFieldError }}</p><label>父分类<select v-model="categoryForm.parentId"><option :value="null">不设父分类</option><option v-for="parent in categoryParents" :key="parent.id" :value="parent.id">{{ parent.name }}</option></select></label><div class="row-actions"><button type="submit" :disabled="writesDisabled">保存</button><button type="button" @click="cancelForms">取消</button></div></form>
-        <form v-if="mergeForm" class="inline-form" @submit.prevent="askMerge"><h4>合并分类</h4><label>来源分类<select v-model="mergeSourceId"><option value="">请选择来源</option><option v-for="source in mergeSources" :key="source.id" :value="source.id">{{ source.name }}</option></select></label><label>目标分类<select v-model="mergeTargetId"><option value="">请选择目标</option><option v-for="target in mergeTargets" :key="target.id" :value="target.id">{{ target.name }}</option></select></label><div v-if="confirmingMerge" class="confirm-actions" role="group"><span>确认后来源分类会被归档。</span><button type="button" :disabled="writesDisabled" @click="confirmMerge">确认合并</button><button type="button" @click="cancelMerge">取消</button></div><div v-else class="row-actions"><button type="submit" :disabled="writesDisabled || !mergeSourceId || !mergeTargetId">继续</button><button type="button" @click="cancelMerge">取消</button></div></form>
+      <section class="catalog-card" aria-labelledby="categories-title"><div class="section-heading"><h3 id="categories-title">分类</h3><div class="row-actions"><button type="button" :disabled="writesDisabled" @click="startCategory()">新增分类</button><button type="button" :disabled="writesDisabled" @click="openMerge">合并来源</button></div></div><div v-if="loading.categories && !categories.length" class="catalog-state" role="status">正在读取分类…</div><div v-else-if="errors.categories" class="catalog-state catalog-error" role="alert">{{ errors.categories }} <button type="button" @click="load('categories')">重试</button></div><ul v-else class="catalog-list"><li v-for="category in visibleCategories" :key="category.id" :class="{ child: category.parentId }"><div><strong>{{ category.name }}</strong><span>{{ categoryParentName(category) }} · {{ category.isSystem ? '系统' : '自定义' }} · {{ category.canUseForRecords ? '可用于记录' : '仅分组' }} · {{ entityStatusLabel(category.status) }}</span></div><div class="row-actions"><button v-if="!category.isSystem && category.status === 'ACTIVE'" type="button" :disabled="writesDisabled" @click="startCategory(category)">编辑</button><button v-if="!category.isSystem && category.status === 'ACTIVE'" type="button" :disabled="writesDisabled" @click="askArchive('category', category)">归档</button></div></li></ul>
+        <AppDialog :open="Boolean(categoryForm)" title-id="category-form-title" initial-focus="#category-name" :busy="mutationState.kind === 'loading'" @close="cancelForms">
+          <section v-if="categoryForm" class="catalog-modal">
+            <div class="modal-heading"><h3 id="category-form-title">{{ categoryForm.id ? '编辑分类' : '新增分类' }}</h3><button type="button" class="modal-close" aria-label="关闭表单" :disabled="mutationState.kind === 'loading'" @click="cancelForms">×</button></div>
+            <form class="inline-form" @submit.prevent="saveCategory"><label>名称<input id="category-name" v-model="categoryForm.name" maxlength="100" :aria-invalid="categoryFieldError ? 'true' : 'false'"></label><p v-if="categoryFieldError" class="field-error" role="alert">{{ categoryFieldError }}</p><label>父分类<select v-model="categoryForm.parentId"><option :value="null">不设父分类</option><option v-for="parent in categoryParents" :key="parent.id" :value="parent.id">{{ parent.name }}</option></select></label><div class="row-actions"><button type="submit" :disabled="writesDisabled || mutationState.kind === 'loading'">保存</button><button type="button" :disabled="mutationState.kind === 'loading'" @click="cancelForms">取消</button></div></form>
+          </section>
+        </AppDialog>
+        <AppDialog :open="mergeForm" title-id="merge-form-title" :busy="mutationState.kind === 'loading'" @close="cancelMerge">
+          <section v-if="mergeForm" class="catalog-modal">
+            <div class="modal-heading"><h3 id="merge-form-title">合并分类</h3><button type="button" class="modal-close" aria-label="关闭表单" :disabled="mutationState.kind === 'loading'" @click="cancelMerge">×</button></div>
+            <form class="inline-form" @submit.prevent="askMerge"><label>来源分类<select v-model="mergeSourceId"><option value="">请选择来源</option><option v-for="source in mergeSources" :key="source.id" :value="source.id">{{ source.name }}</option></select></label><label>目标分类<select v-model="mergeTargetId"><option value="">请选择目标</option><option v-for="target in mergeTargets" :key="target.id" :value="target.id">{{ target.name }}</option></select></label><div v-if="confirmingMerge" class="confirm-actions" role="group"><span>确认后来源分类会被归档。</span><button type="button" :disabled="writesDisabled || mutationState.kind === 'loading'" @click="confirmMerge">确认合并</button><button type="button" :disabled="mutationState.kind === 'loading'" @click="cancelMerge">取消</button></div><div v-else class="row-actions"><button type="submit" :disabled="writesDisabled || !mergeSourceId || !mergeTargetId || mutationState.kind === 'loading'">继续</button><button type="button" :disabled="mutationState.kind === 'loading'" @click="cancelMerge">取消</button></div></form>
+          </section>
+        </AppDialog>
         <button v-if="categoryPage.hasMore" type="button" :disabled="loading.categories" @click="load('categories', { append: true })">加载更多分类</button>
       </section>
-      <section class="catalog-card" aria-labelledby="accounts-title"><div class="section-heading"><h3 id="accounts-title">账户</h3><button type="button" :disabled="writesDisabled" @click="startAccount()">新增账户</button></div><div v-if="loading.accounts && !accounts.length" class="catalog-state" role="status">正在读取账户…</div><div v-else-if="errors.accounts" class="catalog-state catalog-error" role="alert">{{ errors.accounts }} <button type="button" @click="load('accounts')">重试</button></div><ul v-else class="catalog-list"><li v-for="account in visibleAccounts" :key="account.id"><div><strong>{{ account.name }}</strong><span>{{ account.kind }} · {{ account.balanceSide }} · 期初 {{ account.openingBalance }} · 余额 {{ account.balance }} {{ account.currency }} · {{ account.status }}</span></div><div class="row-actions"><button v-if="account.status === 'ACTIVE'" type="button" :disabled="writesDisabled" @click="startAccount(account)">编辑</button><button v-if="!account.isSystem && account.status === 'ACTIVE'" type="button" :disabled="writesDisabled" @click="askArchive('account', account)">归档</button><div v-if="confirmingArchive?.kind === 'account' && confirmingArchive.id === account.id" class="confirm-actions" role="group" :aria-label="`确认归档 ${account.name}`"><span>归档后不可恢复。</span><button type="button" :disabled="writesDisabled" @click="confirmArchive('account', account)">确认归档</button><button type="button" @click="cancelArchive">取消</button></div></div></li></ul>
-        <form v-if="accountForm" class="inline-form" @submit.prevent="saveAccount"><h4>{{ accountForm.id ? '编辑账户' : '新增账户' }}</h4><label>名称<input v-model="accountForm.name" maxlength="100" autofocus></label><label>类型<select v-model="accountForm.kind"><option value="CASH">CASH</option><option value="BANK">BANK</option><option value="WALLET">WALLET</option><option value="CREDIT">CREDIT</option><option value="LOAN">LOAN</option><option value="OTHER_ASSET">OTHER_ASSET</option><option value="OTHER_LIABILITY">OTHER_LIABILITY</option></select></label><label>开户日期<input v-model="accountForm.openingOn" type="date"></label><label>期初余额<input v-model="accountForm.openingBalance" inputmode="decimal"></label><label><input v-model="accountForm.includeInAvailableCash" type="checkbox" :disabled="accountSide(accountForm.kind) === 'LIABILITY'"> 计入可用现金（负债账户不可用）</label><p v-if="accountFieldError" class="field-error" role="alert">{{ accountFieldError }}</p><div class="row-actions"><button type="submit" :disabled="writesDisabled">保存</button><button type="button" @click="cancelForms">取消</button></div></form>
+      <section class="catalog-card" aria-labelledby="accounts-title"><div class="section-heading"><h3 id="accounts-title">账户</h3><button type="button" :disabled="writesDisabled" @click="startAccount()">新增账户</button></div><div v-if="loading.accounts && !accounts.length" class="catalog-state" role="status">正在读取账户…</div><div v-else-if="errors.accounts" class="catalog-state catalog-error" role="alert">{{ errors.accounts }} <button type="button" @click="load('accounts')">重试</button></div><ul v-else class="catalog-list"><li v-for="account in visibleAccounts" :key="account.id"><div><strong>{{ account.name }}</strong><span>{{ accountKindLabel(account.kind) }} · {{ balanceSideLabel(account.balanceSide) }} · 期初 {{ account.openingBalance }} · 余额 {{ account.balance }} {{ account.currency }} · {{ entityStatusLabel(account.status) }}</span></div><div class="row-actions"><button v-if="account.status === 'ACTIVE'" type="button" :disabled="writesDisabled" @click="startAccount(account)">编辑</button><button v-if="!account.isSystem && account.status === 'ACTIVE'" type="button" :disabled="writesDisabled" @click="askArchive('account', account)">归档</button></div></li></ul>
+        <AppDialog :open="Boolean(accountForm)" title-id="account-form-title" initial-focus="#account-name" :busy="mutationState.kind === 'loading'" @close="cancelForms">
+          <section v-if="accountForm" class="catalog-modal">
+            <div class="modal-heading"><h3 id="account-form-title">{{ accountForm.id ? '编辑账户' : '新增账户' }}</h3><button type="button" class="modal-close" aria-label="关闭表单" :disabled="mutationState.kind === 'loading'" @click="cancelForms">×</button></div>
+            <form class="inline-form" @submit.prevent="saveAccount"><label>名称<input id="account-name" v-model="accountForm.name" maxlength="100"></label><label>类型<select v-model="accountForm.kind"><option value="CASH">现金</option><option value="BANK">银行</option><option value="WALLET">电子钱包</option><option value="CREDIT">信用卡</option><option value="LOAN">贷款</option><option value="OTHER_ASSET">其他资产</option><option value="OTHER_LIABILITY">其他负债</option></select></label><label>开户日期<input v-model="accountForm.openingOn" type="date"></label><label>期初余额<input v-model="accountForm.openingBalance" inputmode="decimal"></label><label><input v-model="accountForm.includeInAvailableCash" type="checkbox" :disabled="accountSide(accountForm.kind) === 'LIABILITY'"> 计入可用现金（负债账户不可用）</label><p v-if="accountFieldError" class="field-error" role="alert">{{ accountFieldError }}</p><div class="row-actions"><button type="submit" :disabled="writesDisabled || mutationState.kind === 'loading'">保存</button><button type="button" :disabled="mutationState.kind === 'loading'" @click="cancelForms">取消</button></div></form>
+          </section>
+        </AppDialog>
+        <AppDialog :open="Boolean(archiveTarget)" title-id="catalog-archive-title" initial-focus="#catalog-archive-confirm" :busy="mutationState.kind === 'loading'" :close-on-backdrop="false" @close="cancelArchive">
+          <section v-if="archiveTarget" class="catalog-modal confirm-modal">
+            <div class="modal-heading"><h3 id="catalog-archive-title">确认归档</h3><button type="button" class="modal-close" aria-label="关闭确认框" :disabled="mutationState.kind === 'loading'" @click="cancelArchive">×</button></div>
+            <p>确定归档“{{ archiveTarget.item.name }}”吗？归档后不可恢复。</p>
+            <div class="row-actions"><button id="catalog-archive-confirm" type="button" :disabled="writesDisabled || mutationState.kind === 'loading'" @click="confirmArchive(archiveTarget.kind, archiveTarget.item)">{{ mutationState.kind === 'loading' ? '归档中…' : '确认归档' }}</button><button type="button" :disabled="mutationState.kind === 'loading'" @click="cancelArchive">取消</button></div>
+          </section>
+        </AppDialog>
         <button v-if="accountPage.hasMore" type="button" :disabled="loading.accounts" @click="load('accounts', { append: true })">加载更多账户</button>
       </section>
     </div>

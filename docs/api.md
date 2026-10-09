@@ -1,19 +1,19 @@
 # LedgerX 全局 REST API 规范
 
 - 状态：已接受，替代 Desktop Bridge 协议
-- 日期：2026-09-14
-- 调用方：Vue 3 renderer；提供方：Java 11 本地后端
+- 日期：2026-09-23
+- 调用方：系统浏览器内的 Vue 3；提供方：Java 11 本地后端
 - 传输：仅本机 loopback HTTP/1.1；生产由同一 Java 进程提供前端静态资源和 API
 
 ## 1. 边界
 
-REST API 是 Vue 与 Java 之间唯一业务契约。前端不得访问 SQLite、Java 类或 Electron IPC 来完成业务；Electron 不转发业务 DTO。
+REST API 是 Vue 与 Java 之间唯一业务契约。前端不得访问 SQLite、Java 类或任何桌面桥接来完成业务。浏览器运行时决策见 [ADR-014](./decisions/ADR-014-local-browser-only.md)；[P7-004](./tasks/P7-004-local-browser-runtime.md) 已实现正式网页所需的同源会话契约。Bearer 认证不属于活动 Java 服务或网页版开发代理；相关旧设计和验证只保留为迁移历史。
 
-按 [ADR-010](./decisions/ADR-010-basic-ledger-scope.md)，基础版公开资源只有 system、profiles、settings、categories、accounts、records 和 operation status。本文保留的文件大小、公式、备份等通用约定只是将来启用相应 endpoint 时的约束；当前不得出现在 capabilities、路由或 Vue 导航中。
+按 [ADR-010](./decisions/ADR-010-basic-ledger-scope.md)、[ADR-011](./decisions/ADR-011-enable-metrics-dashboard.md) 与 [ADR-016](./decisions/ADR-016-local-backup-snapshot.md)，目标资源包括 system、profiles、settings、categories、accounts、records、metrics、formulas、dashboard、backups 和 operation status。P9-001 只启用手动本机备份的创建、列表、校验和下载；恢复、上传/导入、自动备份与保留删除仍不得提前出现。
 
-生产后端只绑定 `127.0.0.1` 随机端口，不对局域网或公网提供服务。开发时 Vue 只请求相对 `/api`，Vite 仅可将 `/api/v1` 代理到经校验的 `http://127.0.0.1:<port>`，并仅在该 Node 代理层注入会话 token；生产时 Vue 和 API 同源。默认不开启 CORS。
+生产后端只绑定 `127.0.0.1` 随机端口，不对局域网或公网提供服务。开发时 Vue 只请求相对 `/api`；Vite 代理仅是前端本地开发工具，不参与正式运行或认证。生产时 Vue 和 API 同源。默认不开启 CORS。
 
-开发代理的 origin 必须是带显式端口的 `http://127.0.0.1:<1..65535>`，最多允许一个末尾 `/`；`https`、`localhost`、IPv6、其他地址、凭据、非根路径、query、fragment、空白和非法端口均在 Vite 启动前拒绝。代理键固定为 `/api/v1`。`LEDGERX_DEV_API_TOKEN` 只能存在于 Node 配置环境，严格匹配 43 位 `[A-Za-z0-9_-]`；缺少 origin 时不能启用 token。生产构建不创建开发 proxy，也不把这些变量读取到客户端或写入构建产物。
+如配置 Vite 开发代理，其 origin 必须是带显式端口的 `http://127.0.0.1:<1..65535>`，最多允许一个末尾 `/`；其他地址、凭据、非根路径和非法端口均拒绝。代理键固定为 `/api/v1`。`LEDGERX_DEV_API_TOKEN` 不再是受支持的配置，设置时构建配置会明确失败；本机浏览器路径始终使用上文的 Cookie/CSRF 会话。
 
 业务 API 根路径是 `/api/v1`。公开但不含敏感信息的存活探针只有：
 
@@ -30,37 +30,35 @@ GET /health/live
 - 新增必填请求字段、删除/重命名字段、改变金额/日期/枚举含义或状态码语义是 major 变化。
 - 客户端必须忽略未知响应字段；服务端默认忽略未知普通业务字段。具体 endpoint 可为避免把未交付字段误当成功而明确声明请求对象为闭合结构并拒绝未知字段。
 - 已发布字段不得复用为新含义；弃用 endpoint 至少保留一个稳定版本，并在响应中使用标准 `Deprecation`/`Sunset` 头提示。
-- Vue、Electron、Java 随同一安装包发布，但启动必须核对 API major、应用版本、schema 和 capability，错误时显示兼容提示而不是白屏。
+- Vue 静态资源与 Java 后端随同一交付单元发布；启动时核对 API major、应用版本、schema 和 capability，错误时显示兼容提示而不是白屏。
 
 ## 3. 认证、授权与数据范围
 
 ### 3.1 认证
 
-除 `/health/live` 和生产静态资源外，所有请求必须包含：
+当前浏览器契约：Java 在 `GET /api/v1/system/session` 建立或复用当前进程内短期会话，返回 `200 {"data":{"authMode":"browser","csrfToken":"<base64url>"}}` 和 `Cache-Control: no-store`；会话标识仅放入 host-only、`HttpOnly; SameSite=Strict; Path=/` 的 `ledgerx_session` Cookie，不放入 Vue JavaScript、DOM、URL、local/session storage 或日志。浏览器请求 `/api/v1/*` 自动携带 Cookie，刷新时重新 bootstrap 取得与会话绑定的 CSRF 值；服务重启后旧会话失效。缺失或错误会话返回 `401 AUTHENTICATION_REQUIRED`，不区分原因。POST/PUT/PATCH/DELETE 必须携带 `X-LedgerX-CSRF`，缺失或错误返回 `403 INVALID_CSRF_TOKEN`；错 Host/Origin 返回 `403 REQUEST_ORIGIN_FORBIDDEN`，均不得改变账本。CSRF 值只保存在 Vue 内存，不放入 URL、持久化存储或日志。P7-004 与 P7-002 已通过 Java HTTP 测试和真实浏览器隔离数据闭环验证；本机使用主流程见 P7-003。
 
-```http
-Authorization: Bearer <desktop-session-token>
-```
-
-- token 至少 256 bit、每次 Electron 会话重新生成，只通过子进程环境交给 Java。
-- Electron 只为精确匹配本会话端口的 `/api/v1/*` renderer 请求注入 header。
-- Vue JavaScript、DOM、URL、local/session storage、配置文件和日志均不能获得 token。
-- 缺失或错误 token 返回 `401 AUTHENTICATION_REQUIRED`，并使用固定时间比较；不要区分“缺失”和“错误”。
-- API 不使用 Cookie、OAuth、JWT、长期 API key 或刷新令牌。
+活动浏览器服务拒绝 `Authorization: Bearer <desktop-session-token>`；该机制只见于归档的 Electron 代码与历史测试，不是兼容路径。OAuth、JWT、长期 API key 和刷新令牌均不引入。
 
 ### 3.2 授权和 profile
 
-- 当前 Windows 用户启动的桌面会话是唯一主体，首期没有角色。
+- 当前 Windows 用户启动的本机服务会话是唯一主体，首期没有角色。
 - 普通业务请求作用于 Java application context 中的 active profile；请求不得携带任意 `profileId`。
 - 只有 `/profiles` 管理接口显式使用 profile ID。切换成功后旧 `dataRevision`、游标和页面草稿失效。
 - 恢复模式只允许 system/diagnostics/backup/recovery 明确列出的读写；其他写入返回 `423 RECOVERY_REQUIRED`。
-- 文件接口只接受上传内容、下载流或 Electron 返回的一次性能力，不接受 renderer 提交任意绝对路径。
+- 文件接口只接受上传内容或下载流，不接受浏览器提交任意绝对路径。
 
-### 3.3 来源限制
+### 3.3 账本初始化授权
+
+`system/status.state=READY` 表示 Java 服务和 active profile 已打开，不代表账本已允许记账。状态 DTO 另含 `setupState: PENDING|REVIEW_REQUIRED|COMPLETED` 与 `ledgerStartOn: Date|null`。只有 `setupState=COMPLETED` 时开放普通分类、账户、记录、设置、指标、公式和总览能力。
+
+PENDING/REVIEW_REQUIRED 仍允许 `system.status`、`profiles.read`、`profiles.write`、`ledger.initialization.read`、`ledger.initialization.write` 和 `operations.read`。Java HTTP 路由和 application service 都拒绝普通业务请求，返回 `409 LEDGER_SETUP_REQUIRED`；不可只依赖 Vue 隐藏导航。损坏/恢复状态仍由 `RECOVERY_REQUIRED` 表示，不与 setup 状态混用。
+
+### 3.4 来源限制
 
 - Java 校验 `Host` 为实际 loopback 地址与端口；mutation 的 `Origin` 必须精确为同一 origin。GET/HEAD 可缺失 Origin，但若存在必须同源；任何跨源值都拒绝。
 - 预检或跨源请求默认拒绝，不返回通配 CORS 头。
-- 来源检查不能替代 Bearer token。
+- 来源检查不能替代浏览器会话和 CSRF 校验。
 
 ## 4. 命名、媒体类型与大小
 
@@ -79,7 +77,8 @@ Authorization: Bearer <desktop-session-token>
 
 | Header | 适用范围 | 必填 | 规则 |
 | --- | --- | --- | --- |
-| `Authorization` | `/api/v1/*` | 是 | 由桌面壳/开发代理注入 |
+| `Cookie` | `/api/v1/*` | 是 | 浏览器自动携带 Java 设置的短期同源会话 |
+| `X-LedgerX-CSRF` | 变更请求 | 是 | 同源 bootstrap 得到的独立 CSRF token |
 | `X-Request-Id` | 所有 API | 是 | UUID v4；关联日志与响应，不产生幂等语义 |
 | `Idempotency-Key` | POST/PUT/PATCH/DELETE | 是 | UUID；同一业务尝试在超时重试时复用 |
 | `If-Match` | 修改/删除已有可编辑实体 | 是 | 使用读取响应的强 ETag，如 `"7"` |
@@ -144,15 +143,15 @@ LedgerX-Api-Version: 1.0
 
 | HTTP | code | 含义/重试 |
 | --- | --- | --- |
-| 400 | `INVALID_REQUEST_ID`, `INVALID_JSON`, `VALIDATION_FAILED` | 输入错误；不自动重试 |
-| 401 | `AUTHENTICATION_REQUIRED` | 会话无效；由 Electron 处理，不循环重试 |
+| 400 | `INVALID_REQUEST_ID`, `INVALID_JSON`, `VALIDATION_FAILED`, `ACCOUNT_NOT_OPEN_ON_SETTLEMENT_DATE` | 输入/日期领域错误；不自动重试，字段位置见具体 API |
+| 401 | `AUTHENTICATION_REQUIRED` | 会话无效；由浏览器 UI 引导重新建立本机会话，不循环重试 |
 | 403 | `REQUEST_ORIGIN_FORBIDDEN` | Host/Origin 不属于本次 loopback origin |
 | 404 | `ROUTE_NOT_FOUND`, `NOT_FOUND` | API 路由不存在；或资源在当前范围不可见 |
 | 405 | `METHOD_NOT_ALLOWED` | 路径存在但方法不支持；响应含 `Allow` |
-| 409 | `REFERENCE_CONFLICT`, `REVISION_CONFLICT`, `IDEMPOTENCY_CONFLICT`；后续保留 `FORMULA_INVALID`, `MIGRATION_BLOCKED` | 状态冲突；按用户选择处理 |
+| 409 | `REFERENCE_CONFLICT`, `REVISION_CONFLICT`, `IDEMPOTENCY_CONFLICT`, `LEDGER_SETUP_REQUIRED`, `ALREADY_INITIALIZED`, `REVIEW_CONFIRMATION_REQUIRED`；后续保留 `FORMULA_INVALID`, `MIGRATION_BLOCKED` | 状态冲突；按用户选择处理 |
 | 413 | `PAYLOAD_TOO_LARGE` | body/文件超限 |
 | 415 | `UNSUPPORTED_MEDIA_TYPE` | Content-Type 不支持 |
-| 422 | 后续保留 `DATA_NOT_COMPUTABLE`, `BACKUP_INVALID` | 基础版不使用；相应模块启用后表示语法可读但业务不能处理 |
+| 422 | `BACKUP_INVALID`；后续保留 `DATA_NOT_COMPUTABLE` | 备份包可定位但格式、hash、metadata 或 SQLite 完整性校验失败；不自动重试 |
 | 423 | `RECOVERY_REQUIRED` | 数据库只读，需先恢复 |
 | 428 | `PRECONDITION_REQUIRED` | 修改已有实体但缺少 `If-Match` |
 | 429 | `RATE_LIMITED` | 后端有界队列满；按 `Retry-After` 重试读请求 |
@@ -162,6 +161,17 @@ LedgerX-Api-Version: 1.0
 
 同一 `code` 不得被多个不兼容 HTTP 状态复用。`message` 可本地化，`code` 和字段路径不可随文案变化。
 
+指标迭代增加以下稳定业务错误；具体 endpoint 文档必须固定 field path：
+
+| HTTP | code | 使用条件 |
+| --- | --- | --- |
+| 400 | `FORMULA_INVALID` | AST/token/schema、参数个数、类型、复杂度或引用格式非法 |
+| 409 | `FORMULA_CYCLE` | 新版本会令活动指标依赖图成环；旧版本保持不变 |
+| 409 | `REFERENCE_CONFLICT` | 引用不存在/不可新引用，或归档指标仍被活动公式使用 |
+| 409 | `LAYOUT_INVALID` | 越界、重叠、未知/禁用 widget、尺寸低于内容最小值 |
+
+单个指标因零分母、空样本或依赖不可计算不是 HTTP 错误；dashboard/preview 仍返回 200，并在该指标使用 `dataStatus`。只有整个请求的公式草稿无法验证时才返回 400。
+
 ## 8. 日期、时间、金额和数值
 
 ### 日期时间
@@ -170,7 +180,10 @@ LedgerX-Api-Version: 1.0
 - 期间统一半开 `[start, endExclusive)`；字段必须命名 `endExclusive`。
 - 时间点：UTC RFC 3339，带 `Z`，映射 `Instant`；例 `2026-09-12T08:30:00Z`。
 - 不用无时区午夜 timestamp 表达业务日期。
-- “今天”由后端当前 Windows 时区和可替换 `Clock` 决定；需要复现的查询显式传 `asOf`。
+- “今天”由后端显式业务时区 `Asia/Shanghai` 与可替换 `Clock` 决定；需要复现的查询显式传 `asOf`。
+- 总览调用方提交 `granularity=DAY|WEEK|MONTH|YEAR` 与一个 `anchor=YYYY-MM-DD`；后端返回权威 `start/endExclusive/asOf`。DAY 为一个自然日，WEEK 为周一开始的 7 天，MONTH/YEAR 为自然月/年。
+- 当前或跨未来期间使用 `asOf=min(today,endExclusive-1天)`；完全未来期间返回 `FUTURE`/空序列状态。调用方不得自行把未来天数当作零加入平均值。
+- 历史完整期间使用完整 previous period；当前未结束的 WEEK/MONTH/YEAR 返回截断后的 `comparisonStart/comparisonEndExclusive`，其自然日数与 current start→asOf 的已过天数相同并受上一期长度限制。DAY 返回完整前一日。比较窗口由后端返回，前端不得自行推导。
 
 ### 金额
 
@@ -183,6 +196,19 @@ LedgerX-Api-Version: 1.0
 - 领域用 `BigDecimal`；前端格式化显示但不以 IEEE-754 number 计算或提交金额。
 - 数量/比例同样用十进制字符串；百分比 `12.5` 表示 12.5%。
 - 分母为零返回 `value:null` 与稳定 `dataStatus`，不返回 NaN/Infinity/伪造 0。
+
+指标数值统一投影：
+
+```json
+{
+  "value":"1234.56",
+  "displayFormat":"CURRENCY",
+  "precision":2,
+  "dataStatus":"READY"
+}
+```
+
+`dataStatus` 首版固定为 `READY|EMPTY|NOT_COMPUTABLE|DEPENDENCY_UNAVAILABLE|FUTURE`。`value` 仅在 READY 时为规范 decimal string，其余状态必须为 null；Vue 根据 format/precision 本地化展示，但不能重新计算或舍入后提交。
 
 ## 9. 分页、过滤与排序
 
@@ -233,20 +259,28 @@ LedgerX-Api-Version: 1.0
 | 资源 | 代表 endpoint |
 | --- | --- |
 | system | `GET /system/status`, `GET /system/diagnostics`, `POST /system/actions/open-data-folder` |
+| ledger initialization | `GET/POST /ledger-initialization`；GET 读取 setup/review summary，POST 原子完成初始化 |
 | profiles | `GET/POST /profiles`, `POST /profiles/{id}/activate`, `DELETE /profiles/{id}` |
 | records | `GET/POST /records`, `GET/PUT/DELETE /records/{id}`, `POST /records/{id}/restore` |
 | categories | `GET/POST /categories`, `PUT/DELETE /categories/{id}`, `POST /categories/{targetId}/merge` |
 | accounts | `GET/POST /accounts`, `PUT/DELETE /accounts/{id}` |
 | settings | `GET/PATCH /settings`；未实现的偏好不等于对应执行能力 |
+| metrics | `GET/POST /metrics`, `GET/PUT/DELETE /metrics/{id}`；DELETE 表示归档，不物理删除 |
+| formulas | `POST /formulas/validate`, `POST /formulas/preview`, `GET /formulas/{id}/versions`；保存公式随 metric create/update 原子完成 |
+| dashboard | `GET /dashboard?granularity=&anchor=`, `GET/PUT /dashboard/layout`, `POST /dashboard/layout/reset` |
+| backups | `POST/GET /backups`, `GET /backups/{id}/verify`, `GET /backups/{id}/download`；详见 [backups-api](./api/backups-api.md) |
 | operation status | `GET /operations/{idempotencyKey}` |
 
-具体 API 文档必须声明每个路径的方法、字段、授权、事务、幂等、并发、错误、示例和数据库/领域映射。dashboard、metrics/formulas、assets/allocations、reports/warnings、themes、backup/recovery 和 PDF 导出均不属于基础版；只有用户重新确认范围并补齐具体 API 后才能增加。
+具体 API 文档必须声明每个路径的方法、字段、授权、事务、幂等、并发、错误、示例和数据库/领域映射。账本初始化、指标/总览和备份分别见其具体 API 文档；不得把本表当成足够的实现规格。assets/allocations/direct-metric/reports/warnings/themes/recovery 和 PDF 导出仍不属于当前范围。
 
 ## 12. 响应投影与缓存
 
-- 基础首页通过现有 accounts 与 records 读取需要的数据，不增加聚合 dashboard endpoint。
+- 财务总览只通过 dashboard 聚合 endpoint 读取；禁止 Vue 组合 accounts/records 全量响应计算指标。
 - 列表由各资源 endpoint 分页返回；禁止用一个全量 `Snapshot` 作为隐式契约。
 - DTO 可有展示辅助字段，但必须同时返回结构化原值和数据状态。
+- Dashboard 响应按当前布局顺序返回已启用指标，但布局坐标仍是独立结构；每项包含 metric ID/name/description、value、previousValue、change、trend/breakdown 和 dataStatus。不得返回公式 AST、原始全量记录或持久化表结构。
+- `change.absolute` 与 `change.percent` 均为 decimal string/null；上一期为零时 percent=null 且 status=`NOT_COMPUTABLE`，不能用 100% 或 0% 猜测。
+- DAY 不伪造小时趋势，因为记录只有自然日；DAY 大卡返回分类构成或当日摘要。WEEK 按 7 个自然日、MONTH 按月内自然日、YEAR 按 12 个自然月返回连续桶，过去的无记录桶可为 READY 零，完全未来桶为 FUTURE/null。
 - API 不泄漏表名、rowid、内部类名或完整绝对路径。
 - 业务 JSON 默认 `Cache-Control: no-store`；hash 命名静态资源可长期 immutable，入口 HTML 不长期缓存。
 
@@ -256,5 +290,7 @@ LedgerX-Api-Version: 1.0
 - Java 对每个 endpoint 覆盖认证、合法请求、缺失/非法/未知字段、领域拒绝、幂等重试、并发冲突和内部错误映射。
 - Vue mock 必须模拟 HTTP status、headers、错误、分页、revision 和幂等，不能固定成功。
 - fixtures 必须覆盖金额字符串、日期、null/缺失、枚举大小写、重复 query、过期 cursor 和字段错误路径。
-- 最终真实 Electron 验证至少覆盖并发读取、超时后同 key 写重试、profile 切换使旧游标失效、renderer 刷新后继续通信、后端退出和重启。
-- 浏览器 mock 只算前端验证；不能宣称真实桌面/持久化链路通过。
+- 指标 fixtures 还必须覆盖四种粒度、周一边界、月末/跨年/闰年、发生日与结算日不同、零分母、空账本、未来期间、中文函数 token、重命名后稳定引用、循环依赖和布局重叠。
+- 最终真实浏览器验证至少覆盖并发读取、超时后同 key 写重试、profile 切换使旧游标失效、页面刷新后继续通信、Java 服务退出和重启。
+- 备份契约测试必须覆盖同 key 耐久重试、profile 隔离、坏 ZIP/hash/未知格式、深校验和二进制下载；恢复不在 P9-001 验收内。
+- 浏览器 mock 只算前端验证；不能宣称真实浏览器/持久化链路通过。

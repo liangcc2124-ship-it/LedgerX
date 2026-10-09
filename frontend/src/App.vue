@@ -1,29 +1,78 @@
 <script setup>
-import { nextTick, onMounted, onUnmounted, ref } from 'vue';
+import { nextTick, onMounted, onUnmounted, provide, ref } from 'vue';
 import { ApiClientError, getSystemStatus } from './apiClient.js';
+import { APP_CONTEXT_KEY, createAppContext } from './appContext.js';
 import ProfilesPage from './components/ProfilesPage.vue';
 import SettingsPage from './components/SettingsPage.vue';
 import RecordsPage from './components/RecordsPage.vue';
 import CatalogPage from './components/CatalogPage.vue';
+import DashboardPage from './components/DashboardPage.vue';
+import MetricsPage from './components/MetricsPage.vue';
+import LedgerInitializationPage from './components/LedgerInitializationPage.vue';
 
 const POLL_DELAY_MS = 500;
 const STARTUP_DEADLINE_MS = 15_000;
 
 const view = ref({ kind: 'loading', data: null, error: null });
-const folderFeedback = ref('');
+const appContext = createAppContext();
+provide(APP_CONTEXT_KEY, appContext);
 const activePage = ref('home');
+const navigationNotice = ref('');
 const pageTitles = {
   home: '财务总览',
   profiles: '用户空间',
-  settings: '设置与备份说明',
+  settings: '设置',
   catalog: '分类与账户',
   records: '收支记录',
+  metrics: '指标与公式',
 };
 
 let generation = 0;
 let pollTimer = null;
 let requestController = null;
 let requestPromise = null;
+const pageKeys = new Set(['home', 'records', 'catalog', 'metrics', 'profiles', 'settings']);
+
+function hashPage() {
+  if (typeof window === 'undefined') return 'home';
+  const value = window.location.hash.replace(/^#/, '').trim().toLowerCase();
+  return pageKeys.has(value) ? value : (value ? null : 'home');
+}
+
+function pageAllowed(page) {
+  if (page === 'metrics') return view.value.data?.capabilities?.includes('metrics.read');
+  return pageKeys.has(page);
+}
+
+function syncPageFromHash({ announce = false } = {}) {
+  if (view.value.kind !== 'ready') return;
+  if (view.value.data.setupState !== 'COMPLETED') {
+    activePage.value = 'setup';
+    if (typeof window !== 'undefined' && window.location.hash !== '#setup') window.history.replaceState(null, '', '#setup');
+    return;
+  }
+  const rawHash = typeof window === 'undefined' ? '' : window.location.hash.replace(/^#/, '').trim().toLowerCase();
+  const requested = hashPage();
+  if (!requested || !pageAllowed(requested)) {
+    activePage.value = 'home';
+    if (announce && requested) navigationNotice.value = '当前空间不支持该页面，已返回财务总览。';
+    if (typeof window !== 'undefined' && window.location.hash !== '#home') window.history.replaceState(null, '', '#home');
+    focusPageHeading('home');
+    return;
+  }
+  navigationNotice.value = '';
+  activePage.value = requested;
+  if (typeof window !== 'undefined' && rawHash !== requested) window.history.replaceState(null, '', `#${requested}`);
+  focusPageHeading(requested);
+}
+
+function focusPageHeading(page) {
+  void nextTick(() => {
+    const headingId = page === 'profiles' ? 'profiles-page-title'
+      : page === 'settings' ? 'settings-page-title' : page === 'catalog' ? 'catalog-page-title' : page === 'records' ? 'records-page-title' : page === 'metrics' ? 'metrics-page-title' : view.value.data?.capabilities?.includes('dashboard.read') ? 'dashboard-page-title' : 'home-page-title';
+    document.getElementById(headingId)?.focus();
+  });
+}
 
 function clearPollTimer() {
   if (pollTimer !== null) {
@@ -62,23 +111,27 @@ function setStartupTimeout() {
   };
 }
 
-function selectPage(page) {
-  if (!['home', 'profiles', 'settings', 'catalog', 'records'].includes(page) || view.value.kind !== 'ready') {
+function selectPage(page, { updateHash = true } = {}) {
+  if (!pageKeys.has(page) || view.value.kind !== 'ready' || !pageAllowed(page)) {
     return;
   }
   activePage.value = page;
-  void nextTick(() => {
-    const headingId = page === 'profiles' ? 'profiles-page-title'
-      : page === 'settings' ? 'settings-page-title' : page === 'catalog' ? 'catalog-page-title' : page === 'records' ? 'records-page-title' : 'home-page-title';
-    document.getElementById(headingId)?.focus();
-  });
+  if (updateHash && typeof window !== 'undefined' && window.location.hash !== `#${page}`) window.history.pushState(null, '', `#${page}`);
+  focusPageHeading(page);
 }
 
-function refreshAfterProfileActivation() {
+function refreshAfterProfileActivation(payload) {
   // A profile mutation already completed. Refresh the status in the background
   // so the page that initiated the mutation remains mounted and can show the
   // result; startup/retry flows still use the loading view below.
+  appContext.commitMutation(payload?.meta);
   void loadStatus({ preservePage: true });
+}
+
+function refreshAfterInitialization(payload) {
+  appContext.commitMutation(payload?.meta);
+  if (typeof window !== 'undefined') window.history.replaceState(null, '', '#home');
+  void loadStatus();
 }
 
 function schedulePoll(round, deadline) {
@@ -116,12 +169,18 @@ async function requestStatus(round, deadline) {
     }
     if (response.data.state === 'READY') {
       clearPollTimer();
+      appContext.applyProfileStatus(response);
       view.value = { kind: 'ready', data: response.data, error: null };
+      if (response.data.setupState === 'COMPLETED') {
+        syncPageFromHash({ announce: true });
+      } else {
+        activePage.value = 'setup';
+        if (typeof window !== 'undefined' && window.location.hash !== '#setup') window.history.replaceState(null, '', '#setup');
+      }
       return;
     }
     if (response.data.state === 'RECOVERY_REQUIRED') {
       clearPollTimer();
-      folderFeedback.value = '';
       view.value = { kind: 'recovery', data: response.data, error: null };
       return;
     }
@@ -152,7 +211,6 @@ async function loadStatus({ preservePage = false } = {}) {
   const deadline = Date.now() + STARTUP_DEADLINE_MS;
   clearPollTimer();
   cancelPendingRequest();
-  folderFeedback.value = '';
   if (!preservePage) {
     view.value = { kind: 'loading', data: null, error: null };
   }
@@ -170,34 +228,10 @@ async function loadStatus({ preservePage = false } = {}) {
   void requestStatus(round, deadline);
 }
 
-function desktopBridge() {
-  if (typeof window === 'undefined' || !window.desktop) {
-    return null;
-  }
-  return window.desktop;
-}
-
-function canOpenFolder(method) {
-  const bridge = desktopBridge();
-  return Boolean(bridge && typeof bridge[method] === 'function');
-}
-
-async function openFolder(method) {
-  const bridge = desktopBridge();
-  if (!bridge || typeof bridge[method] !== 'function') {
-    return;
-  }
-  try {
-    const result = await bridge[method]();
-    if (!result || result.ok !== true) {
-      folderFeedback.value = '无法打开目录，请检查权限后重试。';
-    }
-  } catch (error) {
-    folderFeedback.value = '无法打开目录，请检查权限后重试。';
-  }
-}
+function handleHashChange() { syncPageFromHash({ announce: true }); }
 
 onMounted(() => {
+  if (typeof window !== 'undefined') window.addEventListener('hashchange', handleHashChange);
   void loadStatus();
 });
 
@@ -205,12 +239,13 @@ onUnmounted(() => {
   generation += 1;
   clearPollTimer();
   cancelPendingRequest();
+  if (typeof window !== 'undefined') window.removeEventListener('hashchange', handleHashChange);
 });
 </script>
 
 <template>
   <main class="page-shell">
-    <template v-if="view.kind === 'ready'">
+    <template v-if="view.kind === 'ready' && view.data.setupState === 'COMPLETED'">
       <div class="app-shell">
         <aside class="app-sidebar">
           <div class="brand-lockup" aria-label="LedgerX">
@@ -222,6 +257,9 @@ onUnmounted(() => {
           <nav class="main-navigation" aria-label="主导航">
             <button type="button" :class="['nav-button', { 'is-selected': activePage === 'home' }]" :aria-current="activePage === 'home' ? 'page' : undefined" @click="selectPage('home')">
               <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m4 10 8-6 8 6v9a1 1 0 0 1-1 1h-5v-6h-4v6H5a1 1 0 0 1-1-1z" /></svg></span><span>首页</span>
+            </button>
+            <button v-if="view.data.capabilities.includes('metrics.read')" type="button" :class="['nav-button', { 'is-selected': activePage === 'metrics' } ]" :aria-current="activePage === 'metrics' ? 'page' : undefined" @click="selectPage('metrics')">
+              <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 19V5m0 14h14M8 16l3-4 3 2 4-6" /></svg></span><span>指标与公式</span>
             </button>
             <button type="button" :class="['nav-button', { 'is-selected': activePage === 'profiles' }]" :aria-current="activePage === 'profiles' ? 'page' : undefined" @click="selectPage('profiles')">
               <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="3" /><path d="M5 20a7 7 0 0 1 14 0M18 5.5a3 3 0 0 1 0 5.2" /></svg></span><span>用户空间</span>
@@ -253,7 +291,9 @@ onUnmounted(() => {
           </header>
 
           <div class="workspace-content">
-            <section v-if="activePage === 'home'" class="home-panel" aria-labelledby="home-page-title">
+            <p v-if="navigationNotice" class="dashboard-message" role="status">{{ navigationNotice }}</p>
+            <DashboardPage v-if="activePage === 'home' && view.data.capabilities.includes('dashboard.read')" :can-edit="view.data.capabilities.includes('dashboard.layout.write')" />
+            <section v-else-if="activePage === 'home'" class="home-panel" aria-labelledby="home-page-title">
               <div class="home-intro">
                 <h2 id="home-page-title" aria-label="首页" tabindex="-1">财务总览</h2>
                 <p class="home-lede">掌握你的财务现状，专注当下，规划未来。</p>
@@ -268,13 +308,20 @@ onUnmounted(() => {
               </dl>
             </section>
             <ProfilesPage v-else-if="activePage === 'profiles'" @profile-activation-complete="refreshAfterProfileActivation" />
-            <SettingsPage v-else-if="activePage === 'settings'" @profile-activation-complete="refreshAfterProfileActivation" />
+            <SettingsPage v-else-if="activePage === 'settings'" :capabilities="view.data.capabilities" @profile-activation-complete="refreshAfterProfileActivation" />
             <CatalogPage v-else-if="activePage === 'catalog'" />
+            <MetricsPage v-else-if="activePage === 'metrics'" :can-write="view.data.capabilities.includes('metrics.write')"
+              :can-validate="view.data.capabilities.includes('formulas.validate')"
+              :can-formula-write="view.data.capabilities.includes('formulas.write')" />
             <RecordsPage v-else />
           </div>
         </section>
       </div>
     </template>
+
+    <section v-else-if="view.kind === 'ready'" class="ledger-setup-shell" aria-label="账本初始化">
+      <LedgerInitializationPage @initialization-complete="refreshAfterInitialization" />
+    </section>
 
     <section v-else class="status-card" aria-labelledby="page-title">
       <p class="eyebrow">LedgerX</p>
@@ -298,7 +345,7 @@ onUnmounted(() => {
           <span class="status-dot is-ready" aria-hidden="true"></span>
           <div class="status-copy">
             <p class="status-title">本地服务已连接</p>
-            <p class="status-detail">版本 {{ view.data.applicationVersion }} · 状态 {{ view.data.state }}<span v-if="view.data.activeProfileId"> · 当前空间 {{ view.data.activeProfileId }}</span></p>
+            <p class="status-detail">版本 {{ view.data.applicationVersion }} · 状态 {{ view.data.state }}<span v-if="view.data.activeProfileId"> · 当前空间 {{ view.data.activeProfileId }}</span> · 关闭此标签页不会停止本机服务</p>
           </div>
         </template>
 
@@ -313,8 +360,8 @@ onUnmounted(() => {
         <template v-else-if="view.kind === 'auth-error'">
           <span class="status-dot is-error" aria-hidden="true"></span>
           <div class="status-copy">
-            <p class="status-title">桌面会话无效</p>
-            <p class="status-detail">请重新启动 LedgerX。</p>
+            <p class="status-title">本机网页会话已失效</p>
+            <p class="status-detail">请重新建立本机会话，或在启动终端重启本机服务。</p>
           </div>
         </template>
 
@@ -327,17 +374,9 @@ onUnmounted(() => {
         </template>
       </div>
 
-      <div v-if="view.kind === 'recovery'" class="recovery-actions">
+      <div v-if="view.kind === 'recovery' || view.kind === 'auth-error'" class="recovery-actions">
         <button class="retry-button" type="button" @click="loadStatus">刷新状态</button>
-        <button v-if="canOpenFolder('openLogsFolder')" class="secondary-button" type="button" @click="openFolder('openLogsFolder')">
-          打开日志目录
-        </button>
-        <button v-if="canOpenFolder('openDataFolder')" class="secondary-button" type="button" @click="openFolder('openDataFolder')">
-          打开数据目录
-        </button>
       </div>
-
-      <p v-if="folderFeedback" class="action-feedback" role="status" aria-live="polite">{{ folderFeedback }}</p>
 
       <button
         v-if="view.kind === 'bootstrapping' || view.kind === 'error' || view.kind === 'timeout'"
@@ -388,7 +427,7 @@ onUnmounted(() => {
           <button type="button" class="retry-button" @click="selectPage('records')">添加第一笔记录</button>
         </section>
         <ProfilesPage v-else-if="activePage === 'profiles'" @profile-activation-complete="refreshAfterProfileActivation" />
-        <SettingsPage v-else-if="activePage === 'settings'" @profile-activation-complete="refreshAfterProfileActivation" />
+        <SettingsPage v-else-if="activePage === 'settings'" :capabilities="view.data.capabilities" @profile-activation-complete="refreshAfterProfileActivation" />
         <CatalogPage v-else-if="activePage === 'catalog'" />
         <RecordsPage v-else @profile-activation-complete="refreshAfterProfileActivation" />
       </template>

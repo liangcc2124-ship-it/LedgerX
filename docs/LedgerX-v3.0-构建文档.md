@@ -1,5 +1,7 @@
 # LedgerX v3.0 构建文档
 
+> **历史构建记录**：下列 C#/WPF/WebView2/React 命令与结果只属于 v3.0。当前 Vue/Java 本机网页版目标尚未交付，实施以 [tasks/README.md](./tasks/README.md) 为准。
+
 ## 0. 文档信息
 
 | 项目 | 内容 |

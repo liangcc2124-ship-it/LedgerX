@@ -1,16 +1,16 @@
 <div align="center">
   <img src="assets/ledgerx-custom-v2.png" width="112" alt="LedgerX icon" />
   <h1>LedgerX</h1>
-  <p>把财务指标放到桌面上。钱没有变多，但至少终于知道它去哪了。</p>
+  <p>在本机看清自己的财务状况。钱没有变多，但至少终于知道它去哪了。</p>
 </div>
 
 当前版本：v3.1.0
 
-> **重构状态（2026-09-14）**：当前可下载版本仍是下文的 WPF + React/TypeScript v3.1。Vue 3 + Electron + Java 11 + SQLite 基座已完成 V004 seed、基础分类/账户/三类收支记录的 Java/HTTP 链路，以及记录页、目录管理页和基础备份说明页；Java 全量 41/41、前端配置 7/7、Playwright 35/35 已通过，真实 Electron 基础冒烟 2/2、目录新建/重开 1/1、扩展基础记账场景 1/1 已通过，现行目录设置验收 1/1 已通过。P3/P4 仍有完整异常矩阵、Electron 层 child PID/SQLite 只读核验和默认 sandbox 环境证据待补，暂不称为已发布基础记账版。按 [ADR-010](docs/decisions/ADR-010-basic-ledger-scope.md)，资产/分摊、指标/公式、报表/预警、旧数据导入和应用内备份恢复不在本轮范围；基础版退出应用后复制整个 `%LocalAppData%\LedgerX` 目录进行手工备份。详见[需求](docs/requirements.md)、[架构](docs/architecture.md)、[API](docs/api.md)和[实施顺序](docs/tasks/README.md)。
+> **当前方向（2026-09-24）**：不再使用 Electron。新版本机网页的记账主流程已用隔离数据验证，可供个人本机使用；尚未制作安装器或分享包。旧版 v3.1 仍是下文介绍的 WPF/React 产品。新版运行方式见 [frontend/README](frontend/README.md)，后续任务按个人实际需求排期，见[任务路线图](docs/tasks/README.md)。
 
 发布说明：[LedgerX v3.1 基础功能迭代构建文档](docs/LedgerX-v3.1-基础功能迭代构建文档.md)
 
-LedgerX 是一款面向个人使用的 Windows 桌面财务管理软件，专注于把手动记录变成现金、成本、资产、负债和资金链指标。
+LedgerX 是面向个人的本地财务管理软件。下文 v3.1 功能和构建说明属于已发布旧版；新版功能以当前任务路线图为准。
 ## v3.1.0 已完成
 
 本次迭代把基础数据链路接通，并针对实际使用中的表单和总览交互做了收敛：
@@ -63,18 +63,18 @@ LedgerX 仍是本地优先应用：用户空间不等于云账号，不联网同
 - 本地 JSON 持久化
 - 无 Electron、无云端、无在线账号系统
 
-## 目标重构技术栈（当前使用本机 Node 24 环境）
+## 目标网页版技术栈
 
-- Vue 3 + Vite + HTML/CSS/JavaScript：新代码位于计划中的 `frontend/`，可独立开发和测试。
-- Electron：仅负责 Windows 窗口、安全边界和 Java 子进程生命周期。
-- Java 11：本机模块化单体后端，提供只绑定 `127.0.0.1` 的版本化 REST API。
+- Vue 3 + Vite + HTML/CSS/JavaScript：新代码位于 `frontend/`，可独立开发和测试。
+- 系统浏览器：访问 Java 同源提供的页面，不使用 Electron 或其他桌面壳。
+- Java 11：本机模块化单体后端，只绑定 `127.0.0.1`，提供版本化 REST API 和 Vue 静态资源。
 - SQLite：每个用户空间一个账本数据库；Java 是唯一写者。
-- 一个安装包、一个用户入口；不引入云端、微服务或消息系统；首期不考虑 PDF 导出。
+- 一个本机服务入口；不引入云端、微服务或消息系统；首期不考虑 PDF 导出。当前只支持个人本机运行，尚未制作离线分享包。
 - 基础版只提供分类、账户、收入、固定支出、弹性支出、余额、编辑和回收站；不加入金融合规、角色、审批、加密或审计体系。
 
 ## 下载与运行
 
-在仓库的 [Releases](../../releases) 页面下载 `LedgerX.exe`。它是 Windows x64 自包含单文件版本，无需单独安装 .NET。
+以下只适用于已发布的 v3.1 旧版：在仓库的 [Releases](../../releases) 页面下载 `LedgerX.exe`。它是 Windows x64 自包含单文件版本，无需单独安装 .NET；不是新版浏览器交付物。
 
 首次启动后，数据默认保存在：
 
@@ -86,7 +86,7 @@ LedgerX 仍是本地优先应用：用户空间不等于云账号，不联网同
 
 ## 从源码构建
 
-以下命令只适用于当前 v3.1 WPF/React 发布版本；Vue/Electron/Java 基座的验证命令见下方独立小节，不能把两套构建链混用为同一个发布产物。
+以下命令只适用于 v3.1 WPF/React 历史发布版本；Vue/Java 基座的验证命令见下方独立小节，不能把两套构建链混用为同一个发布产物。
 
 需要 Windows 10/11、Node.js 20+ 与 .NET 10 SDK。系统需安装 Microsoft Edge WebView2 Runtime（Windows 11 默认已包含）。
 
@@ -103,26 +103,35 @@ dotnet publish native\LedgerX.Native.csproj -c Release -o release-native-v3.1
 
 发布结果位于 `release-native-v3.1\LedgerX.exe`。如需更新桌面快捷方式，可运行 `powershell -ExecutionPolicy Bypass -File native\Create-DesktopShortcut.ps1`。前端 Playwright 回归测试可用 `cd web; npm test` 运行，原生指标、预警、报告和备份单测可用上面的 `dotnet test` 运行。
 
-### Vue/Electron/Java 基座验证
+### Vue/Java 开发回归
 
-目标基座的独立验证命令如下；这些命令验证源码和隔离测试链路，不生成正式安装包：
+开发新版 Vue/Java 本机网页时，在 `frontend/` 安装锁定依赖并运行前端回归：
 
 ```powershell
 cd frontend
-npm ci --registry=https://registry.npmjs.org
+npm ci
 npm test
 cd ..
-$env:MAVEN_OPTS='-Duser.home=C:\Users\liang'
-.\mvnw.cmd -q '-Dmaven.compiler.fork=true' test package
-cd electron
-npm ci --registry=https://registry.npmjs.org
-npm test
-npm run test:integration
+.\scripts\build-web.ps1
 ```
 
-Electron 测试需在能创建 Windows restricted token 的受控主机权限下执行；不得用 `--no-sandbox` 代替验收。完整范围和证据见 [S0-006 验证记录](docs/verification/S0-006-electron-rest.md)。
+`build-web.ps1` 构建 Vue 页面并执行 Java 测试，产物位于 `target/p7-003/`。需要真实跨层验收时运行 `node frontend/scripts/local-browser-e2e.mjs`，它使用隔离临时账本；旧 Electron 证据见 [S0-006 验证记录](docs/verification/S0-006-electron-rest.md)，仅供历史参考。默认数据根为 `%LOCALAPPDATA%\LedgerX`。网页版可在设置页创建、校验和下载本机备份；备份未加密，请将下载副本另存到可信位置。不要复制运行中的 `ledger.db`。
 
-普通 Maven `package` 生命周期会自动生成源码 Electron fallback 所需的 `target/cp.txt`；无需另行执行 `dependency:build-classpath`。默认桌面数据根为 `%LOCALAPPDATA%\LedgerX`，仅隔离测试使用 `LEDGERX_TEST_DATA_DIR` 覆盖。
+### 启动本机网页版
+
+在 Windows PowerShell 7 中安装 Java 11+、符合 Vite 要求的 Node.js，并准备依赖后，首次构建并启动本机网页版：
+
+```powershell
+cd frontend
+npm ci
+cd ..
+.\scripts\build-web.ps1
+.\scripts\start-local.ps1
+```
+
+构建脚本把 Vue 页面嵌入 Java JAR，并把运行依赖放在同版本目录；普通启动只运行已有 JAR，不需要 Node 或 Vite。服务只绑定 `127.0.0.1`，终端显示可复制的网址；关闭标签页不会停止服务，按 `Ctrl+C` 退出。运行时需要系统安装 Java 11；当前未制作离线分享包或捆绑 JRE。
+
+运行时真实浏览器验收可单独执行 `node frontend/scripts/local-browser-e2e.mjs`；需先完成构建。该命令会在系统临时目录创建隔离账本，检查同源静态资源、会话/CSRF、初始化、记录创建/编辑/回收/恢复、服务重启和窄屏弹窗可达性，结束后清理隔离账本。
 
 ## 自定义皮肤
 

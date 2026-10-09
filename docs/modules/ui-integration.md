@@ -10,7 +10,7 @@
 
 术语：`API client`（唯一 fetch 封装）、`view model`（DTO 的展示投影）、`stale view`（profile/dataRevision 改变后不可提交）、`contract mock`（读取同一 fixtures 的开发替身）、`privacy mask`（视觉隐藏，不是加密）。
 
-非目标：保留 React/TypeScript 目标栈、SSR/Nuxt、复制 Java 财务计算、renderer 直接 Node/Electron/SQLite、巨型全量 snapshot、PDF、用 mock 替代真实 Electron 验收。
+非目标：保留 React/TypeScript 目标栈、SSR/Nuxt、复制 Java 财务计算、浏览器直接 Node/SQLite、巨型全量 snapshot、PDF、用 mock 替代真实浏览器→Java→SQLite 验收。
 
 ## 2. 入口、输出和依赖
 
@@ -64,7 +64,7 @@
 
 - Records 使用 [ledger-records REST API](../api/ledger-records-api.md)。其他页面在对应具体 API 文档完成前只能做无业务提交的静态/合同 UI，不得猜 endpoint。
 - 只有 API `2xx` 或 operation 查询确认完成才显示保存成功；DOM/localStorage 变化不是持久化证据。
-- 基础版没有下载/导入。设置说明可调用既有 `window.desktop.openDataFolder()` 定位目录，但必须提示退出应用后再复制完整目录。
+- 基础版没有下载/导入。设置说明告知默认数据目录及手工复制步骤；浏览器不能直接操作本机文件管理器，因此不依赖或暴露桌面桥接。
 - 主题可保存非敏感显示偏好；账本、金额、token、业务草稿默认不持久化到 Web Storage。
 
 ## 7. 可观测、验收和测试

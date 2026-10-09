@@ -21,7 +21,6 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.Collections;
-import java.util.Base64;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -30,7 +29,6 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ProfilesHttpServerTest {
-    private static final String TOKEN = Base64.getUrlEncoder().withoutPadding().encodeToString(new byte[32]);
     private static final Clock CLOCK = Clock.fixed(Instant.parse("2026-09-13T02:00:00Z"), ZoneOffset.UTC);
     private static final ObjectMapper JSON = new ObjectMapper();
     private static final String FIRST_ID = "17b65036-e5b1-4de9-b78d-068ae54ab047";
@@ -143,7 +141,7 @@ class ProfilesHttpServerTest {
 
             HttpResponse<String> wrongOrigin = client.send(HttpRequest.newBuilder()
                     .uri(URI.create(server.origin() + "/api/v1/profiles"))
-                    .header("Authorization", "Bearer " + TOKEN)
+                    .header("Authorization", "Bearer legacy-token")
                     .header("X-Request-Id", UUID.randomUUID().toString())
                     .header("Idempotency-Key", "8a22c53f-4874-4b1e-847d-3cb6f28d9d0c")
                     .header("Origin", "http://example.invalid")
@@ -172,21 +170,22 @@ class ProfilesHttpServerTest {
         Path web = temp.resolve("web");
         Files.createDirectories(web.resolve("assets"));
         Files.writeString(web.resolve("index.html"), "<h1>test</h1>", StandardCharsets.UTF_8);
-        return new LedgerHttpServer(TOKEN, new InetSocketAddress("127.0.0.1", 0),
+        return new LedgerHttpServer(new InetSocketAddress("127.0.0.1", 0),
                 StaticResourceManifest.forDirectory(web, Collections.singletonMap("index.html", "index.html")),
                 runtime, runtime, new PrintStream(new ByteArrayOutputStream(), true, StandardCharsets.UTF_8), 2, 8);
     }
 
     private static HttpRequest.Builder api(LedgerHttpServer server, String path) {
-        return HttpRequest.newBuilder().uri(URI.create(server.origin() + path))
-                .header("Authorization", "Bearer " + TOKEN)
+        HttpRequest.Builder builder = HttpRequest.newBuilder().uri(URI.create(server.origin() + path))
                 .header("X-Request-Id", UUID.randomUUID().toString());
+        BrowserTestSession.forServer(server).apply(builder);
+        return builder;
     }
 
     private static HttpRequest.Builder mutation(LedgerHttpServer server, String path, String idempotencyKey,
             String ignored) {
         return api(server, path).header("Idempotency-Key", idempotencyKey)
-                .header("Origin", server.origin()).header("Content-Type", "application/json");
+                .header("Content-Type", "application/json");
     }
 
     private static String errorCode(HttpResponse<String> response) throws Exception {

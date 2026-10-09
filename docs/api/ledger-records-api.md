@@ -125,7 +125,7 @@ P3-001 之后每个 active profile 都有 [核心分类与账户 seed 契约](..
 
 ### 3.1 List categories — `GET /api/v1/categories`
 
-用途：读取分类选择器/管理列表。认证：桌面会话；范围：active profile。
+用途：读取分类选择器/管理列表。认证：本机浏览器会话；范围：active profile。
 
 Query：`includeArchived` boolean 默认 `false`；`limit` integer 默认/最大 `200`、范围 1–200；`cursor` 可缺失，不可空字符串。无 body；mutation headers 不适用。
 
@@ -171,13 +171,13 @@ Path `targetId` 必须 ACTIVE。`If-Match` 是目标 revision。Body：
 
 ## 4. 账户 API
 
-### 4.0 已收敛的账户规则与 V004 seed
+### 4.0 已收敛的账户规则与 V004/V006 seed
 
-P3-001 之后每个 active profile 都有 [核心分类与账户 seed 契约](../contracts/core-catalog-v1.md) 中固定 ID 的系统账户“现金储备”。它初始为 CASH、ASSET、0.00、计入可用现金；V004 的 openingOn 是迁移执行机器的本地自然日。系统账户可按普通 replace 规则编辑名称、kind、openingOn、openingBalance、includeInAvailableCash，但不可 archive。
+P3-001 之后每个 active profile 都有 [核心分类与账户 seed 契约](../contracts/core-catalog-v1.md) 中固定 ID 的系统账户“现金储备”。它初始为 CASH、ASSET、0.00、计入可用现金；V004 的 openingOn 是迁移执行机器的本地自然日，仅作为 V006 前旧库兼容值。新 profile 在初始化前为 PENDING，默认账户 openingOn 在确认账本起始日时设为该日期。系统账户在 setup 完成后可按普通 replace 规则编辑名称、kind、openingOn、openingBalance、includeInAvailableCash，但不可 archive。
 
 AccountKind 到服务端只读 BalanceSide 的映射固定为：CASH、BANK、WALLET、OTHER_ASSET 为 ASSET；CREDIT、LOAN、OTHER_LIABILITY 为 LIABILITY。客户端提交 balanceSide 一律按未知只读字段忽略，响应必须返回服务端推导值。LIABILITY 的 includeInAvailableCash 必须是 false；ASSET 可由用户选择 true 或 false。
 
-账户余额的计算不持久化累计值。asOf 早于 openingOn 时余额为 0.00；否则以 openingBalance 起算，叠加 deletedAt 为 null、settlementMode=PAID_FROM_ACCOUNT、settlementOn 不晚于 asOf 的记录。INCOME 对 ASSET 加额、对 LIABILITY 减额；FIXED_COST/VARIABLE_COST 方向相反。基础 records API 拒绝 settlementOn 早于所选账户 openingOn。
+账户余额的计算不持久化累计值。asOf 早于 openingOn 时余额为 0.00；否则以 openingBalance 起算，叠加 deletedAt 为 null、settlementMode=PAID_FROM_ACCOUNT、settlementOn 不晚于 asOf 的记录。INCOME 对 ASSET 加额、对 LIABILITY 减额；FIXED_COST/VARIABLE_COST 方向相反。所有账户 `openingOn` 不得早于已确认 `ledgerStartOn`。基础 records API 拒绝早于账本起始日的发生日或结算日，也拒绝 settlementOn 早于所选账户 openingOn。
 
 ### 4.1 List accounts — `GET /api/v1/accounts`
 
@@ -203,7 +203,7 @@ Query：`asOf` Date 默认后端本地今天；`includeArchived` boolean 默认 
 
 禁止 body 提交 `balance/balanceSide/revision/status`。create 成功 `201` + Location/ETag；replace 成功 `200` + 新 ETag；均返回 `data.account`。系统账户允许编辑上述属性但不得 archive。归档账户不可 replace。
 
-replace 的 openingOn 不得晚于该账户任一 ACTIVE 且 PAID_FROM_ACCOUNT 记录的 settlementOn；否则返回 409 REFERENCE_CONFLICT，details.earliestSettlementOn 给出最早阻断日期。TRASHED 记录不阻止该变更。该限制在 records API 实施前已经生效，因此 P3 的空账本账户替换不受影响。
+replace 的 openingOn 必须不早于 `ledgerStartOn`，也不得晚于该账户任一 ACTIVE 或 TRASHED 且 PAID_FROM_ACCOUNT 记录的 settlementOn；否则返回 `409 REFERENCE_CONFLICT`，`details.earliestSettlementOn` 给出最早阻断日期。包含 TRASHED 记录是为了保证之后仍可恢复。初始化 review 中用户可显式确认调整冲突账户的开户日；普通 account replace 不得绕过该规则。
 
 ### 4.4 Archive account — `DELETE /api/v1/accounts/{id}`
 
@@ -239,12 +239,12 @@ POST/PUT 使用完整草稿；缺字段不表示保留旧值：
 
 | 字段 | 类型 | 必填/空值 | 规则与映射 |
 | --- | --- | --- | --- |
-| `occurredOn` | Date | 是 | → `finance_record.occurred_on` |
+| `occurredOn` | Date | 是 | → `finance_record.occurred_on`；不得早于 `ledgerStartOn` |
 | `recordType` | RecordType | 是 | → `record_type` |
 | `amount` | decimal string | 是 | >0、最多两位 → `amount_minor` |
 | `currency` | string | 是 | `CNY` |
 | `categoryId` | UUID | 是 | ACTIVE 且适用于 recordType |
-| `settlement` | object | 是 | `{mode,accountId,settlementOn}`，见下表 |
+| `settlement` | object | 是 | `{mode,accountId,settlementOn}`，结算日不得早于 `ledgerStartOn`，见下表 |
 | `note` | string | 是 | 0–4000 Unicode，原样保存 |
 
 Settlement：
@@ -255,7 +255,7 @@ Settlement：
 
 RecordDraft 是闭合对象。缺失字段、额外字段、`metricIds`、`allocation`、`fixedAsset`、`incomeSource`、`isSelfGeneratedIncome`、`isNonEssential` 或任何应付款字段都返回 `400 VALIDATION_FAILED`；服务端不得忽略后假装已保存。写入时数据库扩展列使用 NULL/0 默认值，高级关联表零写入。
 
-引用错误固定为 `409 REFERENCE_CONFLICT`：不存在分类 `details.reason=CATEGORY_NOT_FOUND`，归档分类 `CATEGORY_ARCHIVED`，系统分类类型不匹配 `CATEGORY_TYPE_MISMATCH`，不存在账户 `ACCOUNT_NOT_FOUND`，归档账户 `ACCOUNT_ARCHIVED`。同时使用 `fieldErrors.categoryId` 或 `fieldErrors.settlement.accountId`。`settlementOn < openingOn` 是字段值错误，返回 `400 VALIDATION_FAILED` 和 `fieldErrors.settlement.settlementOn`。以上失败均零写入。
+引用错误固定为 `409 REFERENCE_CONFLICT`：不存在分类 `details.reason=CATEGORY_NOT_FOUND`，归档分类 `CATEGORY_ARCHIVED`，系统分类类型不匹配 `CATEGORY_TYPE_MISMATCH`，不存在账户 `ACCOUNT_NOT_FOUND`，归档账户 `ACCOUNT_ARCHIVED`。同时使用 `fieldErrors.categoryId` 或 `fieldErrors.settlement.accountId`。`settlementOn < openingOn` 返回 `400 ACCOUNT_NOT_OPEN_ON_SETTLEMENT_DATE` 和 `fieldErrors.settlement.settlementOn`；早于 `ledgerStartOn` 返回 `400 VALIDATION_FAILED` 并精确定位对应日期字段。以上失败均零写入。
 
 ## 7. 记录 mutation API
 
@@ -354,7 +354,8 @@ revision 冲突返回 409，`details={currentRevision:4,updatedAt:"..."}`；不�
 | FIXED_COST/VARIABLE_COST + ASSET | 账户余额减少；删除后恢复原余额，恢复后再次扣减 |
 | INCOME/支出 + LIABILITY | 收入减少负债、支出增加负债 |
 | 引用不存在/归档/类型不匹配分类或账户 | 409 + 固定 reason/field path，零 finance_record 变更 |
-| settlementOn 早于 openingOn | 400，fieldErrors 为 `settlement.settlementOn`，零写入 |
+| occurredOn/settlementOn 早于 ledgerStartOn | 400，fieldErrors 指向对应日期，零写入 |
+| settlementOn 早于 openingOn | 400 `ACCOUNT_NOT_OPEN_ON_SETTLEMENT_DATE`，fieldErrors 为 `settlement.settlementOn`，零写入 |
 | `FIXED_ASSET_PURCHASE` 或额外 `metricIds` | 400，不写记录或高级表 |
 | 同幂等键重发 create | 只有一行，status/body/dataRevision 与首次相同 |
 | 同 key 改 note | 409 IDEMPOTENCY_CONFLICT，原记录不变 |
@@ -364,7 +365,7 @@ revision 冲突返回 409，`details={currentRevision:4,updatedAt:"..."}`；不�
 | `"1.234"`、`"1e2"` 或 number `1.23` | 400，不舍入、不走浮点 |
 | 无 token/错 token | 401；application/repository 零调用 |
 
-建议层次：领域单元覆盖余额方向/状态；SQLite 集成覆盖事务/FK/幂等/重开；HTTP fixtures 覆盖字段/header/status；Vue 合同覆盖真实名称；Electron E2E 覆盖新增、编辑、回收站、余额和完整重启。
+建议层次：领域单元覆盖余额方向/状态；SQLite 集成覆盖事务/FK/幂等/重开；HTTP fixtures 覆盖字段/header/status；Vue 合同覆盖真实名称；真实系统浏览器 E2E 覆盖新增、编辑、回收站、余额和完整重启。
 
 可观测字段只有路由模板、request ID、profile hash、duration/status/error/dataRevision 和批量数量；禁止金额、名称、note、原始 category/account/metric/asset/body。
 

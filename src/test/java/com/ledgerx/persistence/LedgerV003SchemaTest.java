@@ -37,12 +37,14 @@ class LedgerV003SchemaTest {
         BootstrapSnapshot first = new ProfileBootstrap(temp, CLOCK).open();
         Path ledger = temp.resolve("Profiles").resolve(first.getProfileId()).resolve("ledger.db");
 
-        assertEquals(4, first.getSchemaVersion());
-        assertEquals(4, countRows(ledger, "schema_history"));
+        assertEquals(6, first.getSchemaVersion());
+        assertEquals(6, countRows(ledger, "schema_history"));
         try (Connection connection = new SqliteDatabase(ledger).open()) {
             assertForeignKeysEnabled(connection);
-            assertEquals(Arrays.asList("category", "category_record_type", "finance_record",
-                            "financial_account", "ledger_meta", "ledger_setting", "processed_operation",
+            assertEquals(Arrays.asList("category", "category_record_type", "dashboard_layout",
+                            "dashboard_layout_item", "finance_record", "financial_account",
+                            "formula_definition", "formula_dependency", "formula_version", "ledger_meta",
+                            "ledger_setting", "metric_definition", "metric_visibility", "processed_operation",
                             "schema_history"), tableNames(connection));
             assertEquals(Arrays.asList("idx_category_parent_archived_sort",
                             "idx_category_record_type_record_type_category",
@@ -52,10 +54,16 @@ class LedgerV003SchemaTest {
                             "idx_finance_record_settlement_deleted",
                             "idx_finance_record_type_deleted_occurred",
                             "idx_financial_account_archived_name",
+                            "idx_formula_dependency_account",
+                            "idx_formula_dependency_category",
+                            "idx_formula_dependency_metric",
+                            "idx_formula_version_formula_version_desc",
+                            "idx_metric_definition_active_name",
                             "idx_processed_operation_expires_at",
                             "ux_category_active_parent_name",
                             "ux_category_active_top_name",
-                            "ux_financial_account_active_name"), indexNames(connection));
+                            "ux_financial_account_active_name",
+                            "ux_metric_definition_active_name"), indexNames(connection));
             assertEquals(71, countRows(connection, "category"));
             assertEquals(65, countRows(connection, "category_record_type"));
             assertEquals(1, countRows(connection, "financial_account"));
@@ -90,9 +98,9 @@ class LedgerV003SchemaTest {
 
             BootstrapSnapshot reopened = new ProfileBootstrap(temp, CLOCK).open();
             assertEquals(first.getProfileId(), reopened.getProfileId());
-            assertEquals(4, reopened.getSchemaVersion());
+            assertEquals(6, reopened.getSchemaVersion());
             try (Connection reopenedConnection = new SqliteDatabase(ledger).open()) {
-                assertEquals(4, countRows(reopenedConnection, "schema_history"));
+                assertEquals(6, countRows(reopenedConnection, "schema_history"));
                 assertEquals(installedAt, scalarString(reopenedConnection,
                         "SELECT installed_at FROM schema_history WHERE version = 3"));
                 SqliteHealthCheck.full(reopenedConnection);
@@ -133,10 +141,10 @@ class LedgerV003SchemaTest {
         }
 
         BootstrapSnapshot upgraded = new LedgerBootstrap(CLOCK).open(ledger, profileId);
-        assertEquals(4, upgraded.getSchemaVersion());
+        assertEquals(6, upgraded.getSchemaVersion());
         assertEquals(4, upgraded.getDataRevision());
         try (Connection connection = new SqliteDatabase(ledger).open()) {
-            assertEquals(4, countRows(connection, "schema_history"));
+            assertEquals(6, countRows(connection, "schema_history"));
             assertEquals(1, countRows(connection, "processed_operation"));
             try (PreparedStatement meta = connection.prepareStatement(
                     "SELECT profile_id, updated_at, data_revision FROM ledger_meta WHERE id = 1");
@@ -278,9 +286,9 @@ class LedgerV003SchemaTest {
                     .migrate(connection));
         }
         BootstrapSnapshot reopened = new LedgerBootstrap(CLOCK).open(ledger, profileId);
-        assertEquals(4, reopened.getSchemaVersion());
+        assertEquals(6, reopened.getSchemaVersion());
         try (Connection connection = new SqliteDatabase(ledger).open()) {
-            assertEquals(4, countRows(connection, "schema_history"));
+            assertEquals(6, countRows(connection, "schema_history"));
             assertTrue(tableExists(connection, "category"));
             SqliteHealthCheck.full(connection);
         }

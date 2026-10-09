@@ -16,6 +16,8 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -26,12 +28,23 @@ public final class MigrationRunner {
     private final List<String> resources;
     private final String historyTable;
     private final Clock clock;
+    private final Map<Integer, MigrationHook> hooks;
+
+    public interface MigrationHook {
+        String checksumToken();
+        void apply(Connection connection) throws SQLException, PersistenceException;
+    }
 
     public MigrationRunner(String resource, String historyTable, Clock clock) {
         this(Collections.singletonList(require(resource, "resource")), historyTable, clock);
     }
 
     public MigrationRunner(List<String> resources, String historyTable, Clock clock) {
+        this(resources, historyTable, clock, Collections.emptyMap());
+    }
+
+    public MigrationRunner(List<String> resources, String historyTable, Clock clock,
+            Map<Integer, MigrationHook> hooks) {
         if (resources == null || resources.isEmpty()) {
             throw new IllegalArgumentException("at least one migration resource is required");
         }
@@ -42,6 +55,17 @@ public final class MigrationRunner {
         this.resources = Collections.unmodifiableList(copy);
         this.historyTable = require(historyTable, "historyTable");
         this.clock = clock == null ? Clock.systemUTC() : clock;
+        Map<Integer, MigrationHook> hookCopy = new LinkedHashMap<>();
+        if (hooks != null) {
+            for (Map.Entry<Integer, MigrationHook> entry : hooks.entrySet()) {
+                if (entry.getKey() == null || entry.getKey() < 1 || entry.getValue() == null
+                        || entry.getValue().checksumToken() == null || entry.getValue().checksumToken().trim().isEmpty()) {
+                    throw new IllegalArgumentException("migration hook requires a positive version and checksum token");
+                }
+                hookCopy.put(entry.getKey(), entry.getValue());
+            }
+        }
+        this.hooks = Collections.unmodifiableMap(hookCopy);
     }
 
     public int migrate(Connection connection) throws PersistenceException {
@@ -60,6 +84,9 @@ public final class MigrationRunner {
             for (Migration migration : migrations) {
                 if (migration.version > installedVersion) {
                     executeSql(connection, migration.sql);
+                    if (migration.hook != null) {
+                        migration.hook.apply(connection);
+                    }
                     insertHistory(connection, migration);
                 }
             }
@@ -142,7 +169,7 @@ public final class MigrationRunner {
         List<Migration> migrations = new ArrayList<>(resources.size());
         int expectedVersion = 1;
         for (String resource : resources) {
-            Migration migration = loadMigration(resource);
+            Migration migration = loadMigration(resource, hooks.get(expectedVersion));
             if (migration.version != expectedVersion) {
                 throw new IOException("migration resources must be contiguous and ordered from V001");
             }
@@ -152,7 +179,7 @@ public final class MigrationRunner {
         return migrations;
     }
 
-    private Migration loadMigration(String resource) throws IOException {
+    private Migration loadMigration(String resource, MigrationHook hook) throws IOException {
         String name = fileName(resource);
         Matcher matcher = MIGRATION_NAME.matcher(name);
         if (!matcher.matches()) {
@@ -170,7 +197,9 @@ public final class MigrationRunner {
             }
             byte[] bytes = readAll(input);
             String sql = new String(bytes, StandardCharsets.UTF_8);
-            return new Migration(version, matcher.group(2), sha256(bytes), sql);
+            byte[] checksumSource = hook == null ? bytes : (sql + "\n-- JAVA-HOOK: " + hook.checksumToken())
+                    .getBytes(StandardCharsets.UTF_8);
+            return new Migration(version, matcher.group(2), sha256(checksumSource), sql, hook);
         }
     }
 
@@ -224,12 +253,14 @@ public final class MigrationRunner {
         private final String description;
         private final String checksum;
         private final String sql;
+        private final MigrationHook hook;
 
-        private Migration(int version, String description, String checksum, String sql) {
+        private Migration(int version, String description, String checksum, String sql, MigrationHook hook) {
             this.version = version;
             this.description = description;
             this.checksum = checksum;
             this.sql = sql;
+            this.hook = hook;
         }
     }
 }

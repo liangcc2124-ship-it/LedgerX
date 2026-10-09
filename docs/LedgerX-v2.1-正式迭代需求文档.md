@@ -1,5 +1,7 @@
 # LedgerX v2.1 正式迭代需求文档
 
+> **历史版本需求**：本文记录 v2.1 当时的 WPF/WebView2/React 行为，供等价迁移核对，不是目标技术契约。新实现遵循 [requirements.md](./requirements.md)、[api.md](./api.md) 和模块规格。
+
 ## 0. 文档信息
 
 | 项目 | 内容 |

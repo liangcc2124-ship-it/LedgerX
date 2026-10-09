@@ -1,6 +1,8 @@
 # Build outputs
+/target/
 **/bin/
 **/obj/
+.maven-home/
 release-native/
 
 # Local .NET state

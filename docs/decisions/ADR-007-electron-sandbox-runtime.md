@@ -1,5 +1,7 @@
 # ADR-007：Electron renderer 沙箱保持开启与本机启动限制
 
+> 历史决策：Electron 已被 [ADR-014](./ADR-014-local-browser-only.md) 取代；下文沙箱验收不再适用于当前网页版。
+
 - 状态：已接受（实现约束；工具沙箱限制已通过受控主机执行规避）
 - 日期：2026-09-13
 - 范围：S0-004 Electron 桌面壳
@@ -20,6 +22,12 @@ S0-004 要求 BrowserWindow 使用 `nodeIntegration:false`、`contextIsolation:t
 - 当前工作区的 Node 单元/静态安全测试及受控主机真实 Electron renderer/Java/REST/刷新链路均可验证；嵌套工具沙箱中的失败仅作为环境限制记录。
 - 发布前仍必须在目标环境重新构建/启动并执行真实原生链路；若目标环境仍失败，应升级评估 Electron 版本、Windows 安全策略或签名/打包环境，不得通过关闭沙箱绕过。
 - 仅禁用硬件加速可能降低图形性能；若后续测得 UI 性能不足，应单独评估硬件加速策略并复核安全与兼容性。
+
+## P7-001 验证补充（2026-09-23）
+
+- 在受控 Windows 11 x64 主机权限下，未改变 `sandbox:true` 或现有 GPU 开关，20 次真实 Electron→Java→Vue 冷启动均进入 READY，P95 ≤ 5 秒；同一后端进程内 20 次刷新保持 loopback origin。
+- 默认沙箱下的 renderer 强制崩溃恢复、Java 强退后用户重试及正常/异常退出进程清理通过真实 Playwright 集成验证。
+- 嵌套工具沙箱中的历史 `launch-failed/49` 属于执行环境限制；本轮受控权限测试没有复现。Windows 10 和最终打包产物仍须在对应目标环境验收。
 
 ## 参考
 

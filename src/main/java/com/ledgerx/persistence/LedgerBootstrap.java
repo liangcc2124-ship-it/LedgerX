@@ -14,10 +14,14 @@ import java.util.Arrays;
 
 /** Creates or reopens one profile ledger and applies the ordered ledger schema. */
 public final class LedgerBootstrap {
+    /** Highest ledger schema version understood by this application build. */
+    public static final int CURRENT_SCHEMA_VERSION = 6;
     private static final String LEDGER_V001 = "/db/ledger/migration/V001__bootstrap.sql";
     private static final String LEDGER_V002 = "/db/ledger/migration/V002__ledger_settings.sql";
     private static final String LEDGER_V003 = "/db/ledger/migration/V003__ledger_core_facts.sql";
     private static final String LEDGER_V004 = "/db/ledger/migration/V004__core_catalog_seed.sql";
+    private static final String LEDGER_V005 = "/db/ledger/migration/V005__metrics_formulas_dashboard.sql";
+    private static final String LEDGER_V006 = "/db/ledger/migration/V006__ledger_initialization.sql";
 
     private final Clock clock;
 
@@ -35,8 +39,15 @@ public final class LedgerBootstrap {
         }
         boolean existed = Files.exists(normalized, LinkOption.NOFOLLOW_LINKS);
         try (Connection connection = new SqliteDatabase(normalized).open()) {
-            int schemaVersion = new MigrationRunner(Arrays.asList(LEDGER_V001, LEDGER_V002, LEDGER_V003, LEDGER_V004),
-                    "schema_history", clock).migrate(connection);
+            if (existed) SqliteHealthCheck.quick(connection);
+            int schemaVersion = new MigrationRunner(
+                    Arrays.asList(LEDGER_V001, LEDGER_V002, LEDGER_V003, LEDGER_V004, LEDGER_V005, LEDGER_V006),
+                    "schema_history", clock,
+                    java.util.Collections.singletonMap(6, new LedgerInitializationMigration(!existed, clock)))
+                    .migrate(connection);
+            if (schemaVersion != CURRENT_SCHEMA_VERSION) {
+                throw new PersistenceException("ledger schema support constant is out of sync");
+            }
             if (!existed) {
                 insertMeta(connection, profileId);
             } else {
@@ -101,12 +112,14 @@ public final class LedgerBootstrap {
     private BootstrapSnapshot readSnapshot(Connection connection, String profileId, int schemaVersion)
             throws PersistenceException {
         try (PreparedStatement statement = connection.prepareStatement(
-                "SELECT data_revision FROM ledger_meta WHERE id = 1");
+                "SELECT m.data_revision,s.setup_state,s.ledger_start_on FROM ledger_meta m "
+                        + "JOIN ledger_setting s ON s.id=1 WHERE m.id=1");
                 ResultSet result = statement.executeQuery()) {
             if (!result.next()) {
                 throw new PersistenceException("ledger metadata is missing");
             }
-            return new BootstrapSnapshot(profileId, schemaVersion, result.getLong(1));
+            return new BootstrapSnapshot(profileId, schemaVersion, result.getLong(1),
+                    result.getString("setup_state"), result.getString("ledger_start_on"));
         } catch (SQLException ex) {
             throw new PersistenceException("ledger metadata could not be read", ex);
         }

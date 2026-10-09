@@ -1,5 +1,7 @@
 # LedgerX 个人财务管理软件产品需求文档
 
+> **历史产品文档**：保留业务愿景与版本记录；技术实现、已确认范围和非目标以当前 [requirements.md](./requirements.md) 为准。目标架构为 Vue 3/JavaScript + Electron + Java 11 REST + SQLite，首期不做 PDF。
+
 - 文档版本：v2.2
 - 产品形态：Windows 单机桌面应用
 - 使用对象：仅软件所有者本人
